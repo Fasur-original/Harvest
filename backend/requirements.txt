@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic-settings
+python-jose
+passlib
+bcrypt
+asyncpg 
+greenlet
+pyinstaller
