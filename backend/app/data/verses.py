@@ -16,6 +16,23 @@ from app.models import Verse
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "bible"
 
+SUPPORTED_TRANSLATIONS = ["KJV", "ASV", "YLT", "WEB"]
+
+
+async def get_verse(
+    db: AsyncSession, book: str, chapter: int, verse: int, translation: str
+) -> Verse | None:
+    """Direct lookup by reference + translation (PDD §6.1) -- the regex-match fast path."""
+    result = await db.execute(
+        select(Verse).where(
+            Verse.book == book,
+            Verse.chapter == chapter,
+            Verse.verse == verse,
+            Verse.translation == translation,
+        )
+    )
+    return result.scalar_one_or_none()
+
 
 async def load_translation(db: AsyncSession, translation: str) -> int:
     """Idempotently upserts data/bible/<translation>.json into the verses table.

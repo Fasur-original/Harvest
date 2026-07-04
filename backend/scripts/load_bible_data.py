@@ -11,11 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/ -> importable as `app.*`
 
-from app.data.verses import load_all_translations  # noqa: E402
+from app.data.verses import SUPPORTED_TRANSLATIONS, load_all_translations  # noqa: E402
 from app.database import AsyncSessionLocal, engine  # noqa: E402
 from app.models import Base  # noqa: E402
-
-TRANSLATIONS = ["KJV", "ASV", "YLT", "WEB"]
 
 
 async def main() -> None:
@@ -23,7 +21,7 @@ async def main() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
-        counts = await load_all_translations(db, TRANSLATIONS)
+        counts = await load_all_translations(db, SUPPORTED_TRANSLATIONS)
 
     for translation, count in counts.items():
         print(f"{translation}: {count} rows written")

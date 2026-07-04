@@ -1,28 +1,35 @@
 # Phase 03 — Backend Core & Manual Search
 
-## What to accomplish
+**Status: Complete.**
 
-- Build out the named function layer (§6.1/§6.2) for real: `get_verse`, `get_song`, `save_song`, `start_service_set`, `get_active_set`, `clear_service_set` — reading from the Bible data landed in Phase 02. `parse_song_sheet` is stubbed here and fully implemented in Phase 07; for now, songs can be created directly via `save_song` with manually-entered lines.
-- REST routes (`routes/bible.py`, `routes/songs.py`, `routes/service.py`) that call those functions — no raw SQL or direct ORM queries in route handlers, per §6's stated reason (swapping the DB later means changing one layer, not every call site).
-- The WebSocket endpoint from PDD §13 (`ConnectionManager`, `/ws`), so the operator console has a live push channel wired up even before matching produces anything to push.
-- A manual search path in the operator console: type a reference or song title, get it back, confirm it, see it delivered over the WebSocket. This is the same "request → validate → write → read" loop the PDD's minimal runnable version (§7) demonstrates, now running against real data instead of the throwaway `Song` table in that section.
+## What was accomplished
 
-## Objective
+- Named function layer (§6.1/§6.2) built out for real: `get_verse` (added to `app/data/verses.py`), and new `app/data/songs.py` (`save_song`, `get_song`, `search_songs`) and `app/data/service_state.py` (`start_service_set`, `get_active_set`, `clear_service_set`). `parse_song_sheet` stays stubbed for Phase 07 — songs are created directly via `save_song` with manually-entered lines for now.
+- New models: `Song` / `SongLine` (`app/models/song.py`), `ServiceSet` (+ the `service_set_songs` join table, `app/models/service_set.py`).
+- REST routes: `app/routes/bible.py` (`GET /bible/verse`), `app/routes/songs.py` (`POST /songs`, `GET /songs?q=`, `GET /songs/{id}`), `app/routes/service.py` (`POST /service/start`, `GET /service/active`, `POST /service/clear`) — aggregated in `app/routes/__init__.py` as `api_router`. No route touches the DB directly; everything goes through `app/data/*.py`.
+- WebSocket endpoint per PDD §13: `app/ws.py` (`ConnectionManager`, `manager.send_to_all`), wired into `main.py`'s `/ws` route. A `{"action": "confirm", ...}` message from any connected client is broadcast to every connected client — verified with two simultaneous WebSocket connections.
+- `main.py`'s startup `lifespan` now creates tables and auto-loads all four translations from `data/bible/*.json` if the `verses` table is empty (using Phase 02's `load_all_translations`) — the app now populates its own local DB on first run rather than requiring a manual script.
+- Manual search UI in the operator console: verse search (book/chapter/verse/translation), song title search, a Confirm button per result, and a WebSocket status/last-message panel.
+- Dead scaffolding removed: the commented-out `api_router`/`AppException` placeholders in `main.py` are gone, replaced by the real thing.
 
-Prove the whole plumbing — HTTP in, DB function layer, WebSocket out — works end to end against real verse/song data, before adding STT or matching on top of it. If this loop is solid, every later phase is "produce a suggestion," not "figure out how suggestions reach the screen."
+## A bug found and fixed during verification
 
-## Expected outcomes
+The first working version had Confirm buttons that sent content over the *backend* WebSocket, but `DisplayWindow.tsx` (Phase 01) still only listened to the *Tauri-native event bus* from Phase 01's "Show Sample Verse/Song" buttons — two disconnected channels. Confirming a verse never reached the projector; the display just kept showing whatever sample content was last pushed via the old mechanism. Caught via user testing (automated REST/WebSocket checks alone didn't surface it, since they didn't exercise the actual `DisplayWindow` component).
 
-- An operator can manually search for a verse (`book`, `chapter`, `verse`, `translation`) or a song by title and get a result back from the API.
-- Confirming that result pushes it over the WebSocket to a connected client (can just be a log line or Phase 01's display window at this point).
-- `start_service_set` / `get_active_set` / `clear_service_set` work against a real service-state table, even though nothing yet populates "today's set" automatically.
-- No route or worker in the codebase queries the DB directly — everything goes through `app/data/*.py`.
+Fix: `DisplayWindow.tsx` now subscribes to the real backend WebSocket (`useBackendSocket`, the same hook the operator console uses) instead of the Tauri event bus. The Phase 01 "mechanics check" buttons and `lib/display-bus.ts` are removed — they were explicitly a throwaway placeholder per Phase 01's own doc ("Tauri events... this phase is a mechanics check, not the real pipeline"), and leaving both paths active was exactly the kind of duplicate-push-mechanism the project's guardrails warn against. Also fixed along the way: `confirmSong` originally sent only `{id, title}` with no line text at all (would have silently failed the same way) — it now fetches the full song and sends its first line's text, since display is line-by-line (PDD §5.3.1) even though search is by title.
+
+## Verification performed
+
+- Every REST endpoint exercised directly (`curl`): verse lookup (found + 404), song create/search/get-by-id (found + 404), service set start/active/clear (including the active→cleared→404 transition).
+- WebSocket broadcast verified with two simultaneous connections (simulating operator console + display window) — a confirm message sent on one connection is received on both, for both verse and song payload shapes.
+- Frontend type-checks (`tsc --noEmit`) and production build (`pnpm build`) both clean after the fix.
+- Visually confirmed end-to-end by the user: search → confirm → projector window updates correctly.
 
 ## Code quality guardrails
 
-- One search implementation per content type. Don't write a separate "quick lookup" query in the route file "just for this endpoint" when `get_verse`/`get_song` already exist.
-- Delete the commented-out `api_router`/`AppException` scaffolding in `backend/app/main.py` once the real router and exception handler exist — don't leave both the comment and the real code side by side.
+- One search implementation per content type — confirmed, no ad hoc queries in route files.
+- Exactly one thing reaches the projector display now (`DisplayWindow`'s backend WebSocket subscription) — the Phase 01 placeholder path is gone, not left running alongside it.
 
 ## Inputs needed from you
 
-None specific to this phase — it consumes Phase 00's DB decision and Phase 02's data, both already resolved by the time this starts.
+None — this phase is complete.

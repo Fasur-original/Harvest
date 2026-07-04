@@ -1,5 +1,7 @@
 # Phase 01 — Static Display Shell (No AI)
 
+**Status: Complete, superseded by Phase 03.** This phase's Tauri-event message path (`lib/display-bus.ts`) and its hardcoded "Show Sample Verse/Song Line" buttons were placeholder-only by design (see the note below) and have since been removed — `DisplayWindow` now subscribes to the real backend WebSocket from Phase 03. The two-window mechanics (multi-monitor placement, one shared `DisplayWindow` renderer) this phase validated are still in place and unchanged.
+
 ## What to accomplish
 
 - Two Tauri windows: the **operator console** (controls, always on the operator's screen) and the **projector output window** (full-screen, high-contrast text, meant to be dragged onto/assigned to the second display).
