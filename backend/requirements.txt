@@ -5,6 +5,7 @@ pydantic-settings
 python-jose
 passlib
 bcrypt
-asyncpg 
+asyncpg
+aiosqlite
 greenlet
 pyinstaller

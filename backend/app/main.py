@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import settings
-# from app.api.v1.router import api_router
+# from app.routes import api_router
 # from app.core.exceptions import AppException
 
 

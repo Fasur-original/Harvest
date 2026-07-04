@@ -1,0 +1,22 @@
+# Environments
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local SQLite DB
+*.db
+*.db-journal
+
+# Secrets
+.env
+
+# PyInstaller build output (Phase 10)
+build/
+dist/
+*.spec
