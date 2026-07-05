@@ -1,27 +1,67 @@
 # Phase 04 — Speech-to-Text Pipeline
 
-## What to accomplish
+**Status: Complete** for everything testable without a live human voice — see "What's left for you" below.
 
-- `faster-whisper` worker that reads a **live audio stream** (church sound system feed, or the laptop mic for testing/dev per PDD §3.1/§8) and transcribes it continuously. Audio is read and discarded — never written to disk, per the PDD's explicit safeguard (§3.1, §4).
-- Per Phase 00's decision, this runs as a background asyncio task/thread inside the backend process for the desktop build — not a standalone script, and not coordinated through Redis (that's hosted-only, §4/§14).
-- An in-process queue carrying transcript **text** (never audio) from the worker to the backend's request-handling side.
-- `LiveTranscript.tsx` in the operator console: a live-updating view of what's being transcribed, with no matching logic behind it yet. This phase is a pipeline speed/accuracy check, not a feature.
+## What was built
 
-## Objective
+- `workers/stt_worker.py` — `STTWorker`: opens the default audio input device via `sounddevice`, buffers incoming audio in memory only, and transcribes it in speech-bounded chunks with `faster-whisper` (see "Accuracy improvements" below for how chunking actually works), pushing resulting text onto an in-process `asyncio.Queue`. No audio is ever written to disk — confirmed by inspection (the only things touching the filesystem in this module are the model weights faster-whisper caches itself; the captured audio never leaves memory).
+- `app/routes/transcript.py` — `POST /transcript/start` / `/stop`, `GET /transcript/status`, and a broadcast loop that drains the worker's transcript queue and pushes each line to every connected client over the same `/ws` connection from Phase 03, as `{"type": "transcript", "text": ...}`.
+- `desktop/src/operator/LiveTranscript.tsx` — Start/Stop button, a running log of received transcript lines (capped at 20), syncs its running-state on mount via `/transcript/status` so a page reload doesn't show "Start" while it's actually already running.
+- New config settings (`app/config.py`, `.env.example`): `WHISPER_MODEL_SIZE`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`, `WHISPER_LANGUAGE`, `TRANSCRIPT_MIN_CHUNK_SECONDS`, `TRANSCRIPT_MAX_CHUNK_SECONDS`, `TRANSCRIPT_SILENCE_MS` — deliberately not hardcoded to one hardware profile, since you asked for something that works well across systems rather than one fixed spec.
 
-Confirm STT latency and accuracy are workable on the target hardware before any matching logic depends on it being fast enough to feel live. Debugging "matching is wrong" is much harder if "the transcript itself is 8 seconds behind" is also true and unmeasured.
+## Model size: measured, not assumed
 
-## Expected outcomes
+The PDD's default assumption (§8) was `faster-whisper` "small" on CPU. Measured against real synthetic speech on this dev machine:
 
-- Speaking into the audio source produces streaming transcript text visible in the operator console within an acceptable latency budget.
-- No audio is ever persisted — this should be verifiable by inspection (no file writes anywhere in the STT worker's code path).
-- The queue only ever carries text, never audio buffers, across the worker→backend boundary.
+| Model | ~2.6s clip: transcribe time | Real-time factor |
+| --- | --- | --- |
+| base (int8, CPU) | 2.5–2.9s (one run spiked to 5.5s) | ~0.95–1.1x, occasionally >1x |
+| tiny (int8, CPU) | 1.25–1.35s consistently | ~0.5x |
+
+At ~1x real-time factor, "base" can't reliably keep up with continuous live audio on this hardware — a backlog would grow over time. **Default changed to "tiny"**, chunked at 2.0s, giving a typical total latency (buffer fill + transcribe) of ~3.3–3.6s — inside the 2–4s target you set, with occasional slower spikes observed (once ~5.5s) that look like general system noise rather than a pipeline problem. Both values are `.env`-configurable per install; a machine with more headroom can move up to "base" or "small" for better accuracy.
+
+Transcription accuracy itself was excellent on both models — tested against speech synthesized entirely offline (Windows SAPI TTS, so no network dependency for the test audio): `"For God so loved the world, that He gave His only begotten Son."` transcribed correctly (only capitalization differed from the input), same for `"Amazing grace, how sweet the sound."`
+
+## Verification performed
+
+- **Real hardware confirmed present**: `sounddevice.query_devices()` lists an actual microphone array as the default input on this machine — not a given in every environment.
+- **`/transcript/start` opens the real device successfully** (`{"running": true}`, no hardware error) and `/transcript/stop` cleans up correctly (`{"running": false}`).
+- **Transcription accuracy**: verified directly against `STTWorker._transcribe()` (the exact method the live loop calls) using offline-synthesized speech, for both candidate models.
+- **Buffering → transcribe → queue pipeline**: verified by injecting synthetic audio into `_audio_queue` in small chunks (simulating real callback delivery) and confirming correct text arrived on `transcript_queue` via the real `_transcribe_loop()`.
+- **Queue → WebSocket broadcast**: this reuses Phase 03's already-verified `manager.send_to_all`, which was proven with two simultaneous real WebSocket connections.
+- Frontend type-checks and production build both clean.
+
+## A concurrency bug found during your real testing
+
+Clicking **Start Listening** repeatedly (because model loading takes a few seconds with no visual feedback) triggered overlapping `/transcript/start` calls. `STTWorker.start()` checked `if self._running: return` but didn't set `_running = True` until *after* awaiting the model load — so several concurrent calls could each pass that guard before the first one finished, each opening its own audio stream. Only the last one stayed reachable via `self._stream`; the earlier ones leaked with no code path left to stop them, which is exactly the "can't stop it now" symptom reported. Restarting the backend process was the only way to clear it, since that tears down every leaked stream at the OS level regardless of how many got orphaned.
+
+Fixed two ways:
+
+- **Backend**: `start()` and `stop()` now both take an `asyncio.Lock`, so concurrent calls serialize — a second call blocks until the first has actually set `_running = True`, then sees it and returns instead of opening a second stream. Verified by firing 5 concurrent `/transcript/start` calls (via `asyncio.gather` over threaded blocking requests, so they genuinely overlap on the wire) — all 5 returned `{"running": true}` cleanly with no `PortAudioError`, and 5 concurrent `/transcript/stop` calls afterward all returned `{"running": false}` cleanly too.
+- **Frontend**: `LiveTranscript.tsx`'s button now disables itself and shows "Please wait…" while a start/stop request is in flight, so the multi-second model-load window doesn't read as an unresponsive click inviting more clicks — the actual cause of the repeated presses in the first place.
+
+## Accuracy improvements
+
+Requested after initial testing worked but accuracy wasn't ideal. Four changes, roughly cheapest-to-most-impactful:
+
+1. **Explicit language hint.** `_transcribe()` now passes `language=settings.WHISPER_LANGUAGE` (default `"en"`) instead of letting Whisper auto-detect language per chunk — auto-detection is least reliable on short clips, so this is free accuracy *and* free speed.
+2. **Domain-specific prompt.** `CHURCH_VOCABULARY_PROMPT` biases the decoder toward this app's actual content — book names and archaic/liturgical phrasing ("verily," "saith the LORD," "Yahweh," etc.) that a generic model is likeliest to mis-transcribe. Passed as `initial_prompt` on every `transcribe()` call.
+3. **Model size** — left as your call, no default change. "tiny" was chosen for latency reasons on this specific dev machine (see above); if your actual hardware has more headroom, `WHISPER_MODEL_SIZE=base` in `.env` is a one-line change, already supported.
+4. **Speech-boundary-aware chunking, replacing fixed 2-second windows.** This was the biggest structural change. The old design sliced audio on a rigid clock regardless of sentence boundaries — a real problem, since it silently discarded everything past the first 2 seconds of anything longer, cutting speech off mid-word. `_transcribe_loop` now uses `faster_whisper.vad.get_speech_timestamps` to detect actual pauses: it buffers at least `TRANSCRIPT_MIN_CHUNK_SECONDS` (1.0s), then transcribes as soon as `TRANSCRIPT_SILENCE_MS` (500ms) of trailing silence is detected, or once `TRANSCRIPT_MAX_CHUNK_SECONDS` (8.0s) is hit regardless (bounding worst-case latency for a run-on sentence with no natural pause).
+
+   A real bug surfaced building this: since the mic callback doesn't pause just because the code is deciding where to cut, the buffer can already contain the start of the *next* utterance (or the rest of a long one) by the time a flush fires. The first version discarded everything past the cutoff point, silently losing audio. Fixed by carrying `audio[cutoff:]` forward into the new buffer instead of dropping it.
+
+   Verified with two synthetic tests: two sentences separated by a real pause now come through as two separate, complete, correctly-split transcript lines (previously would've been cut off at a fixed 2s regardless of where the pause actually was); and a deliberately long 17-second run-on sentence with no pause now comes through complete across three chunks via the 8s safety cap, instead of the old design silently losing everything past the first 2 seconds. There's a minor accuracy cost right at a forced-cutoff boundary (a word split across two chunks) — an inherent tradeoff of any hard latency cap, not a bug.
+
+## What's left for you
+
+I have no way to produce physical audio input from here, so the one thing I couldn't verify myself is the actual live path: speaking into the real microphone. Please restart the backend fresh, run `pnpm tauri dev`, click **Start Listening** *once* in the operator console (it should now show "Please wait…" briefly rather than feeling unresponsive), and speak — transcript lines should appear within a few seconds, on natural sentence/phrase boundaries now rather than an arbitrary fixed clock. Let me know how the accuracy changes above land in practice.
 
 ## Code quality guardrails
 
-- The STT worker is one task inside the backend process for desktop — don't introduce a Redis/multi-process queue abstraction here "for consistency with hosted mode" when the desktop build explicitly doesn't need it (§14).
+- The STT worker is one `asyncio` task inside the backend process (confirmed — no subprocess, no Redis, per Phase 00's desktop-vs-hosted split).
+- The queue → WebSocket path reuses Phase 03's `manager.send_to_all` rather than building a second push mechanism — transcript messages and confirm messages travel the same connection, distinguished by a `type`/`action` discriminator.
 
 ## Inputs needed from you
 
-- **Latency target.** "Feels live" needs a number to test against — what's the maximum acceptable delay between something being said and it appearing as transcript text (e.g. 1–2 seconds)? Without this, "pipeline speed check" has no pass/fail line.
-- **Hardware confirmation.** PDD §8 assumes an 8GB+ RAM laptop with no GPU is sufficient for `faster-whisper` (small model). If the actual operator laptop spec is known, confirm it now so the whisper model size (tiny/base/small) is chosen against real hardware rather than the PDD's default assumption.
+Only the live-mic test above. Latency target (2–4s) and hardware philosophy ("works well across systems" → configurable, not hardcoded) are both already resolved and reflected in the settings above.

@@ -9,4 +9,7 @@ bcrypt
 asyncpg
 aiosqlite
 greenlet
+faster-whisper
+sounddevice
+numpy
 pyinstaller

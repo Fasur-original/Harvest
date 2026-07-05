@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useBackendSocket } from "../lib/backend-ws";
+import LiveTranscript from "./LiveTranscript";
 
 const API_BASE = "http://localhost:8000";
 
@@ -201,6 +202,8 @@ function OperatorConsole() {
           ))}
         </ul>
       </section>
+
+      <LiveTranscript lastMessage={lastMessage} />
 
       <section className="flex flex-col gap-1 border-t border-neutral-300 pt-3 text-xs text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
         <p>Backend WebSocket: {connected ? "connected" : "disconnected"}</p>
