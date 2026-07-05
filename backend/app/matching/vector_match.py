@@ -113,15 +113,22 @@ def embed_and_store_song_lines(batch_size: int = 64) -> int:
         conn.close()
 
 
-def search_by_embedding(text: str, scope: Scope, top_k: int = 5) -> list[MatchCandidate]:
-    """Returns the closest matches above sqlite-vec's own floor, ranked by score.
+def embed_query(text: str) -> bytes:
+    """Embeds text for search (not storage) into a ready-to-query sqlite-vec blob.
 
-    An empty result means the index for that scope has nothing in it yet
-    (e.g. no songs uploaded) -- not an error.
+    Split out from `search_by_embedding` so a caller checking multiple scopes
+    for the same text (verses and songs, e.g.) embeds it once and reuses the
+    result via `search_by_vector`, rather than re-running the embedding model
+    on identical input once per scope -- embedding, not the vec0 lookup
+    itself, is the expensive part of a search.
     """
     model = _ensure_model()
-    query_vector = to_blob(model.encode([text], normalize_embeddings=True)[0].tolist())
+    return to_blob(model.encode([text], normalize_embeddings=True)[0].tolist())
 
+
+def search_by_vector(query_vector: bytes, scope: Scope, top_k: int = 5) -> list[MatchCandidate]:
+    """Same as `search_by_embedding`, but takes an already-embedded query."""
+    model = _ensure_model()
     conn = get_connection()
     try:
         ensure_tables(conn, model.get_sentence_embedding_dimension())
@@ -175,3 +182,14 @@ def search_by_embedding(text: str, scope: Scope, top_k: int = 5) -> list[MatchCa
         return candidates
     finally:
         conn.close()
+
+
+def search_by_embedding(text: str, scope: Scope, top_k: int = 5) -> list[MatchCandidate]:
+    """Returns the closest matches above sqlite-vec's own floor, ranked by score.
+
+    An empty result means the index for that scope has nothing in it yet
+    (e.g. no songs uploaded) -- not an error. Convenience wrapper for a
+    single-scope search; see `embed_query`/`search_by_vector` if searching
+    more than one scope for the same text.
+    """
+    return search_by_vector(embed_query(text), scope, top_k)

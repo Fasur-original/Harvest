@@ -45,8 +45,15 @@ async def _broadcast_loop() -> None:
         await manager.send_to_all({"type": "transcript", "text": text})
 
         match = await find_match(text)
-        if match is not None:
-            await manager.send_to_all({"type": "suggestion", **match})
+        if match is None:
+            continue
+        if match["kind"] == "unresolved_reference":
+            # The operator clearly tried to name a reference just now and it
+            # didn't resolve -- clear any stale pending suggestion so it
+            # doesn't look like it corresponds to what was just said (Phase 06).
+            await manager.send_to_all({"type": "no_match"})
+            continue
+        await manager.send_to_all({"type": "suggestion", **match})
 
 
 @router.post("/start")

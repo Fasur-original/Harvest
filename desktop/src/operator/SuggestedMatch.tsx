@@ -20,6 +20,11 @@ function isSuggestionMessage(message: unknown): message is SuggestionMessage {
   return candidate.type === "suggestion" && typeof candidate.text === "string";
 }
 
+function isNoMatchMessage(message: unknown): boolean {
+  if (typeof message !== "object" || message === null) return false;
+  return (message as Record<string, unknown>).type === "no_match";
+}
+
 function describeSuggestion(s: SuggestionMessage): string {
   if (s.kind === "verse") {
     return `${s.book} ${s.chapter}:${s.verse} (${s.translation})`;
@@ -39,6 +44,14 @@ function SuggestedMatch({ lastMessage, onConfirm }: { lastMessage: unknown; onCo
   useEffect(() => {
     if (isSuggestionMessage(lastMessage)) {
       setSuggestion(lastMessage);
+    } else if (isNoMatchMessage(lastMessage)) {
+      // The operator clearly tried to name a reference just now and it
+      // didn't resolve -- clear a stale pending suggestion rather than
+      // leaving it looking like it corresponds to what was just said.
+      // Ordinary continued speech (no recognized reference at all) never
+      // sends this, so a suggestion still awaiting Confirm isn't at risk of
+      // being cleared out from under the operator mid-thought.
+      setSuggestion(null);
     }
   }, [lastMessage]);
 

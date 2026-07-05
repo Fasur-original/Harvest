@@ -17,7 +17,7 @@ from app.config import settings
 from app.data.verses import get_verse
 from app.database import AsyncSessionLocal
 from app.matching.regex_match import parse_reference_candidates
-from app.matching.vector_match import search_by_embedding
+from app.matching.vector_match import embed_query, search_by_vector
 
 
 async def find_match(text: str) -> dict | None:
@@ -45,12 +45,26 @@ async def find_match(text: str) -> dict | None:
                         "match_type": "regex",
                         "confidence": 1.0,
                     }
-        return None
+        # A book name and chapter/verse-shaped numbers were recognized, but no
+        # candidate reading resolved to a real verse (bad chapter/verse, or an
+        # unsupported separator regex doesn't cover yet). Distinct from
+        # "nothing reference-shaped was said at all" below -- the operator
+        # console uses this to clear a stale pending suggestion, since the
+        # speaker clearly *tried* to name something specific just now. It must
+        # NOT fire on ordinary continued speech (which has no recognized book
+        # name at all), or a suggestion still awaiting confirmation would get
+        # yanked out from under the operator mid-thought.
+        return {"kind": "unresolved_reference"}
 
     loop = asyncio.get_running_loop()
+    # Embed once and reuse for both scopes -- embedding is the expensive part
+    # of a search, and re-running it per scope on identical input wastes a
+    # full model pass on every line that doesn't regex-match, which is most
+    # ordinary speech during a live service.
+    query_vector = await loop.run_in_executor(None, embed_query, text)
     verse_candidates, song_candidates = await asyncio.gather(
-        loop.run_in_executor(None, search_by_embedding, text, "verses", 1),
-        loop.run_in_executor(None, search_by_embedding, text, "songs", 1),
+        loop.run_in_executor(None, search_by_vector, query_vector, "verses", 1),
+        loop.run_in_executor(None, search_by_vector, query_vector, "songs", 1),
     )
     candidates = verse_candidates + song_candidates
     if not candidates:
