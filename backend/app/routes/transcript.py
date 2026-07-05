@@ -1,7 +1,5 @@
-"""Start/stop control for the live transcript feed (Phase 04).
-
-No matching logic here -- this phase only proves speech reaches the operator
-console as text within an acceptable latency. Matching is Phase 05.
+"""Start/stop control for the live transcript feed (Phase 04) and the
+regex-then-embeddings matching pipeline that runs on each line (Phase 05).
 """
 
 from __future__ import annotations
@@ -13,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from app.config import settings
+from app.matching.pipeline import find_match
 from app.ws import manager
 
 # workers/ sits at the repo root, a sibling of backend/ (PDD §11), not under
@@ -34,6 +33,7 @@ worker = STTWorker(
     min_chunk_seconds=settings.TRANSCRIPT_MIN_CHUNK_SECONDS,
     max_chunk_seconds=settings.TRANSCRIPT_MAX_CHUNK_SECONDS,
     silence_ms=settings.TRANSCRIPT_SILENCE_MS,
+    cpu_threads=settings.WHISPER_CPU_THREADS,
 )
 
 _broadcast_task: asyncio.Task | None = None
@@ -43,6 +43,10 @@ async def _broadcast_loop() -> None:
     while True:
         text = await worker.transcript_queue.get()
         await manager.send_to_all({"type": "transcript", "text": text})
+
+        match = await find_match(text)
+        if match is not None:
+            await manager.send_to_all({"type": "suggestion", **match})
 
 
 @router.post("/start")

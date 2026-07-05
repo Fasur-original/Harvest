@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useBackendSocket } from "../lib/backend-ws";
 import LiveTranscript from "./LiveTranscript";
+import SuggestedMatch from "./SuggestedMatch";
 
 const API_BASE = "http://localhost:8000";
 
@@ -81,6 +82,10 @@ function OperatorConsole() {
     send({ action: "confirm", kind: "verse", ...verseResult });
   }
 
+  function confirmSuggestion(suggestion: { kind: "verse" | "song"; text: string; [key: string]: unknown }) {
+    send({ action: "confirm", ...suggestion });
+  }
+
   async function confirmSong(song: SongSummary) {
     // Manual search finds the song; display is still line-by-line (PDD §5.3.1),
     // so confirming from a title match shows its first line here. Stepping
@@ -106,6 +111,8 @@ function OperatorConsole() {
       <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
         Harvest — Operator Console
       </h1>
+
+      <SuggestedMatch lastMessage={lastMessage} onConfirm={confirmSuggestion} />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold text-neutral-500 dark:text-neutral-400">

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 import time
@@ -65,6 +66,17 @@ def _web_slug(book: str) -> str:
     return book.lower().replace(" ", "")
 
 
+# scrollmapper's YLT text carries stray <FI>/<Fi> "supplied words" italics
+# markers (translator-added words, traditionally shown in italics in print --
+# not something that should ever reach a projector screen as literal text).
+# Strip the tags, keep the words between them.
+_SUPPLIED_WORD_TAG_RE = re.compile(r"</?Fi>", re.IGNORECASE)
+
+
+def _clean_verse_text(text: str) -> str:
+    return _SUPPLIED_WORD_TAG_RE.sub("", text).strip()
+
+
 def prepare_scrollmapper_translation(translation: str, cache_dir: Path) -> list[dict]:
     raw = _fetch(SCROLLMAPPER_URL.format(translation), cache_dir / f"{translation}.json")
     books = json.loads(raw)["books"]
@@ -80,7 +92,7 @@ def prepare_scrollmapper_translation(translation: str, cache_dir: Path) -> list[
                         "book": canonical_name,
                         "chapter": chapter["chapter"],
                         "verse": verse["verse"],
-                        "text": verse["text"].strip(),
+                        "text": _clean_verse_text(verse["text"]),
                     }
                 )
 

@@ -37,6 +37,28 @@ CHURCH_VOCABULARY_PROMPT = (
 )
 
 
+def _normalize_audio(audio: np.ndarray, target_rms: float = 0.1, max_gain: float = 4.0) -> np.ndarray:
+    """Boosts quiet audio toward a target loudness before VAD/transcription.
+
+    Measured effect, not assumed: this only helps a genuinely quiet-but-clean
+    signal (e.g. speaker further from the mic in an otherwise quiet room) --
+    tested against noise-dominated audio, it did nothing (garbled either way,
+    since amplifying noise-corrupted audio amplifies the noise right along
+    with the speech) and at an aggressive gain cap it once turned a correctly
+    "nothing detected" result into a hallucinated phrase, which is worse than
+    silence. `max_gain` is kept conservative for that reason -- testing found
+    the quiet-but-clean case recovers fully even at this lower cap, so there's
+    no accuracy reason to risk a higher one. RMS-based rather than peak-based
+    so a single loud transient (a cough, a mic bump) doesn't suppress the
+    gain for the rest of the chunk.
+    """
+    rms = float(np.sqrt(np.mean(np.square(audio))))
+    if rms < 1e-6:
+        return audio
+    gain = min(target_rms / rms, max_gain)
+    return np.clip(audio * gain, -1.0, 1.0).astype(np.float32)
+
+
 class STTWorker:
     def __init__(
         self,
@@ -47,11 +69,13 @@ class STTWorker:
         min_chunk_seconds: float,
         max_chunk_seconds: float,
         silence_ms: int,
+        cpu_threads: int = 0,
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._language = language
+        self._cpu_threads = cpu_threads
         self._min_chunk_frames = int(min_chunk_seconds * SAMPLE_RATE)
         self._max_chunk_frames = int(max_chunk_seconds * SAMPLE_RATE)
         self._vad_options = VadOptions(min_silence_duration_ms=silence_ms)
@@ -74,7 +98,12 @@ class STTWorker:
 
     def _ensure_model(self) -> WhisperModel:
         if self._model is None:
-            self._model = WhisperModel(self._model_size, device=self._device, compute_type=self._compute_type)
+            self._model = WhisperModel(
+                self._model_size,
+                device=self._device,
+                compute_type=self._compute_type,
+                cpu_threads=self._cpu_threads,
+            )
         return self._model
 
     def _on_audio(self, indata: np.ndarray, frames: int, time_info, status) -> None:
@@ -132,7 +161,7 @@ class STTWorker:
                 if buffered_frames < self._min_chunk_frames:
                     continue
 
-                audio = np.concatenate(buffer)
+                audio = _normalize_audio(np.concatenate(buffer))
                 force = buffered_frames >= self._max_chunk_frames
                 cutoff = await loop.run_in_executor(None, self._find_flush_point, audio, force)
 

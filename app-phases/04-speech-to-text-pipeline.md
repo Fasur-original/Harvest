@@ -53,6 +53,22 @@ Requested after initial testing worked but accuracy wasn't ideal. Four changes, 
 
    Verified with two synthetic tests: two sentences separated by a real pause now come through as two separate, complete, correctly-split transcript lines (previously would've been cut off at a fixed 2s regardless of where the pause actually was); and a deliberately long 17-second run-on sentence with no pause now comes through complete across three chunks via the 8s safety cap, instead of the old design silently losing everything past the first 2 seconds. There's a minor accuracy cost right at a forced-cutoff boundary (a word split across two chunks) — an inherent tradeoff of any hard latency cap, not a bug.
 
+## Laptop-mic accuracy: what actually helped, and an honest dead end
+
+After real testing on a laptop mic (not a church soundboard feed) still showed low accuracy, two more things were tried:
+
+**Configurable CPU threading** (`WHISPER_CPU_THREADS`, default `0` = auto). Benchmarking found explicitly capping thread count (vs. letting it use every core) can noticeably cut "base" model latency and variance — but the exact best value was noisy and inconsistent across repeated runs on this shared dev machine, so instead of hardcoding a number that only reflects this sandbox, it's now a tunable setting for whoever deploys on real target hardware.
+
+**Audio gain normalization — tried, tested, and found to be a narrower fix than hoped.** The hypothesis was that a laptop mic's quieter signal was hurting accuracy, so `_normalize_audio()` boosts quiet audio toward a target RMS loudness before VAD/transcription. Tested against three degradation levels (quiet-but-clean, moderate noise, heavy noise) rather than assumed to work:
+
+- **Quiet-but-clean audio** (attenuated volume, minimal added noise): normalization fully recovered accurate transcription. This is the one case it demonstrably helps.
+- **Moderate noise added**: both normalized and non-normalized audio came out equally garbled. Amplifying a noise-corrupted signal amplifies the noise right along with the speech — gain normalization can't distinguish one from the other, so it does nothing for this case.
+- **Heavier noise, aggressive gain (10x cap)**: one run turned a correctly-empty result ("nothing confident enough detected") into a **hallucinated phrase** ("Jesus Christ, Jesus Christ, Jesus Christ,") — a known Whisper failure mode on out-of-distribution audio. A hallucinated phrase risks a confident, wrong embedding match, which is worse than finding nothing. This wasn't 100% reproducible (noise realization matters), but real enough to change the design.
+
+Kept the normalization (it has a genuine, demonstrated benefit case and doesn't measurably help *or* hurt the noisy cases at a conservative cap), but lowered the default gain cap from 10x to **4x** — testing showed the quiet-but-clean case recovers just as fully at the lower cap, so there was no accuracy reason to keep the higher hallucination risk.
+
+**The honest bottom line**: gain normalization only ever helps a *quiet* signal, not a *noisy* one, and your reported problem ("laptop mic, not a dedicated channel like church has") sounds like it's dominated by background noise, distance, and room echo — exactly the failure mode this fix doesn't touch, because there's no software trick that separates a preacher's voice from room noise after a cheap built-in mic has already blended them together. This is precisely why the PDD's own design (§3.1, §8) routes the actual church sound system output through a proper audio interface for production use, rather than relying on a laptop's built-in mic — that's not a fallback path, it's the intended production setup. Testing on a laptop mic will likely keep showing this ceiling regardless of further software tuning, until tested against a real line-in feed or at least a much closer/cleaner mic source.
+
 ## What's left for you
 
 I have no way to produce physical audio input from here, so the one thing I couldn't verify myself is the actual live path: speaking into the real microphone. Please restart the backend fresh, run `pnpm tauri dev`, click **Start Listening** *once* in the operator console (it should now show "Please wait…" briefly rather than feeling unresponsive), and speak — transcript lines should appear within a few seconds, on natural sentence/phrase boundaries now rather than an arbitrary fixed clock. Let me know how the accuracy changes above land in practice.

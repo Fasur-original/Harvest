@@ -12,4 +12,6 @@ greenlet
 faster-whisper
 sounddevice
 numpy
+sentence-transformers
+sqlite-vec
 pyinstaller
