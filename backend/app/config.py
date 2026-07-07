@@ -48,6 +48,21 @@ class Settings(BaseSettings):
     TRANSCRIPT_MIN_CHUNK_SECONDS: float = 1.0
     TRANSCRIPT_MAX_CHUNK_SECONDS: float = 8.0
     TRANSCRIPT_SILENCE_MS: int = 500
+    # faster-whisper's own default is 5 -- beam search explores 5 candidate
+    # decodings per step and keeps the best, instead of greedily taking the
+    # single most-likely token at each step (beam_size=1). Reverted to that
+    # default after real accuracy complaints: on this dev machine, tiny+beam1
+    # transcribed a real scripture-reading test as "...to them who are the
+    # call to according to His purpose" (garbled) -- tiny+beam5 fixed it
+    # ("...the call according...", matching what beam1 + the much larger
+    # "base" model both produced). Bumping model size to "base" made *no*
+    # further accuracy difference on this test, just added ~1s of latency --
+    # so beam width, not model size, was the actual lever here. Latency cost
+    # of beam5 vs beam1 measured at ~400-1300ms per chunk depending on
+    # content (see app-phases/04-speech-to-text-pipeline.md for both this and
+    # the earlier sung-line benchmark) -- comfortably inside the 8s chunk cap
+    # either way, so there's no real-time-keeping-up risk from this change.
+    WHISPER_BEAM_SIZE: int = 5
 
     # Matching (Phase 05). "bge-small" is the default for the same reason
     # "tiny" won Phase 04: measured on real hardware, not assumed. Bulk-
@@ -63,6 +78,19 @@ class Settings(BaseSettings):
     # once the app is actually in use, not a calibrated number.
     MATCH_CONFIDENCE_THRESHOLD: float = 0.75
     MATCH_DEFAULT_TRANSLATION: str = "KJV"
+    # Below MATCH_CONFIDENCE_THRESHOLD but at/above this floor: not confident
+    # enough to auto-suggest one answer, but not nothing either -- a preacher
+    # paraphrasing a half-remembered verse (wrong book, garbled wording, no
+    # reference at all) lands here. Same "placeholder, tune against real
+    # transcripts" status as MATCH_CONFIDENCE_THRESHOLD above (PDD §16) --
+    # picked low enough to still catch a genuine but rough paraphrase,
+    # high enough that it doesn't turn ordinary unrelated speech into a list
+    # of irrelevant guesses.
+    MATCH_CANDIDATE_THRESHOLD: float = 0.55
+    # How many ranked options to show when in that band -- enough to likely
+    # include the right one without the list itself becoming noise the
+    # operator has to read through mid-service.
+    MATCH_CANDIDATE_COUNT: int = 3
 
     class Config:
         env_file = ".env"

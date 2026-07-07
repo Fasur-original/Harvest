@@ -1,9 +1,18 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { useBackendSocket } from "../lib/backend-ws";
-import LiveTranscript from "./LiveTranscript";
-import SuggestedMatch from "./SuggestedMatch";
+import { usePersistedState } from "../lib/use-persisted-state";
+import ConsoleView from "./ConsoleView";
+import LibraryView from "./LibraryView";
+import { isCandidatesMessage, type Candidate } from "./MatchOptions";
+import Sidebar from "./Sidebar";
+import SettingsView from "./SettingsView";
+import { isNoMatchMessage, isSuggestionMessage, type SuggestionMessage } from "./SuggestedMatch";
+import { isTranscriptMessage } from "./LiveTranscript";
+import type { ConfirmablePayload } from "./types";
 
 const API_BASE = "http://localhost:8000";
+const MAX_TRANSCRIPT_LINES = 20;
 
 type VerseResult = {
   book: string;
@@ -26,15 +35,46 @@ type SongLine = {
 
 type SongDetail = SongSummary & { lines: SongLine[] };
 
-const inputClass =
-  "rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100";
-const cardClass =
-  "flex items-center justify-between gap-3 rounded-lg border border-neutral-300 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-800";
-const confirmButtonClass =
-  "shrink-0 rounded-lg bg-green-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-700";
-
 function OperatorConsole() {
   const { lastMessage, connected, send } = useBackendSocket();
+
+  // Live-service state, not per-page UI state -- lifted here (which stays
+  // mounted for the app's whole life, wrapping <Routes>) so switching to
+  // Library or Settings and back doesn't lose the transcript log or drop a
+  // suggestion still awaiting a decision. The transcript log additionally
+  // survives a full reload via localStorage (use-persisted-state.ts); the
+  // pending suggestion/candidates deliberately do not -- both are tied to a
+  // specific moment of live speech that's already passed by the time a
+  // reload happens, so restoring one after a restart would risk the
+  // operator confirming something stale mid-service.
+  const [transcriptLines, setTranscriptLines] = usePersistedState<string[]>("harvest:transcript-lines", []);
+  const [suggestion, setSuggestion] = useState<SuggestionMessage | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
+
+  useEffect(() => {
+    if (isTranscriptMessage(lastMessage)) {
+      setTranscriptLines((prev) => [...prev.slice(-(MAX_TRANSCRIPT_LINES - 1)), lastMessage.text]);
+    }
+  }, [lastMessage, setTranscriptLines]);
+
+  useEffect(() => {
+    if (isSuggestionMessage(lastMessage)) {
+      setSuggestion(lastMessage);
+    } else if (isNoMatchMessage(lastMessage)) {
+      // The operator clearly tried to name a reference just now and it
+      // didn't resolve -- clear a stale pending suggestion rather than
+      // leaving it looking like it corresponds to what was just said.
+      setSuggestion(null);
+    }
+  }, [lastMessage]);
+
+  useEffect(() => {
+    if (isCandidatesMessage(lastMessage)) {
+      setCandidates(lastMessage.candidates);
+    } else if (isNoMatchMessage(lastMessage)) {
+      setCandidates(null);
+    }
+  }, [lastMessage]);
 
   const [verseQuery, setVerseQuery] = useState({
     book: "John",
@@ -48,6 +88,58 @@ function OperatorConsole() {
   const [songQuery, setSongQuery] = useState("");
   const [songResults, setSongResults] = useState<SongSummary[]>([]);
   const [songError, setSongError] = useState<string | null>(null);
+
+  const [defaultTranslation, setDefaultTranslation] = useState("");
+  const [activeService, setActiveService] = useState<{
+    id: number;
+    default_translation: string | null;
+    songs: SongSummary[];
+  } | null>(null);
+  const [serviceError, setServiceError] = useState<string | null>(null);
+
+  async function startService() {
+    setServiceError(null);
+    // Re-sends the currently active set's own songs rather than an empty
+    // list -- /service/start replaces the whole set, so just updating the
+    // translation here must not silently drop songs a different flow already
+    // put in today's set.
+    const songIds = activeService?.songs.map((s) => s.id) ?? [];
+    const res = await fetch(`${API_BASE}/service/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song_ids: songIds, default_translation: defaultTranslation || null }),
+    });
+    if (!res.ok) {
+      setServiceError(`Error ${res.status}`);
+      return;
+    }
+    setActiveService(await res.json());
+  }
+
+  async function clearService() {
+    setServiceError(null);
+    const res = await fetch(`${API_BASE}/service/clear`, { method: "POST" });
+    if (!res.ok) {
+      setServiceError(`Error ${res.status}`);
+      return;
+    }
+    setActiveService(null);
+  }
+
+  useEffect(() => {
+    // Picks up a service already started before this window was opened
+    // (e.g. the app was closed and reopened mid-service) rather than showing
+    // a blank "no active service" state that doesn't match reality.
+    fetch(`${API_BASE}/service/active`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setActiveService(data);
+          setDefaultTranslation(data.default_translation ?? "");
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function searchVerse(e: FormEvent) {
     e.preventDefault();
@@ -82,14 +174,19 @@ function OperatorConsole() {
     send({ action: "confirm", kind: "verse", ...verseResult });
   }
 
-  function confirmSuggestion(suggestion: { kind: "verse" | "song"; text: string; [key: string]: unknown }) {
-    send({ action: "confirm", ...suggestion });
+  function confirmSuggestion(payload: ConfirmablePayload) {
+    send({ action: "confirm", ...payload });
+    // Confirming anything -- this suggestion, a ranked candidate, a queue
+    // entry, a manual search result -- means whatever's still pending here
+    // has been superseded by a decision, so it shouldn't linger on screen
+    // tempting a second, contradictory click.
+    setSuggestion(null);
+    setCandidates(null);
   }
 
   async function confirmSong(song: SongSummary) {
-    // Manual search finds the song; display is still line-by-line (PDD §5.3.1),
-    // so confirming from a title match shows its first line here. Stepping
-    // through the rest of a song's lines is Phase 06+ UI, not this phase's job.
+    // Manual search finds the song; display is still line-by-line, so
+    // confirming from a title match shows its first line here.
     const res = await fetch(`${API_BASE}/songs/${song.id}`);
     if (!res.ok) {
       setSongError(`Error ${res.status}`);
@@ -107,120 +204,65 @@ function OperatorConsole() {
   }
 
   return (
-    <main className="flex h-screen flex-col gap-6 overflow-y-auto bg-neutral-100 p-6 dark:bg-neutral-900">
-      <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-        Harvest — Operator Console
-      </h1>
-
-      <SuggestedMatch lastMessage={lastMessage} onConfirm={confirmSuggestion} />
-
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-neutral-500 dark:text-neutral-400">
-          Manual verse search (Phase 03)
-        </h2>
-        <form onSubmit={searchVerse} className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col text-xs text-neutral-600 dark:text-neutral-300">
-            Book
-            <input
-              value={verseQuery.book}
-              onChange={(e) => setVerseQuery({ ...verseQuery, book: e.target.value })}
-              className={inputClass}
+    <div className="flex h-screen bg-neutral-50 dark:bg-neutral-950">
+      <Sidebar connected={connected} />
+      <main className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-8">
+          <Routes>
+            <Route path="/" element={<Navigate to="/console" replace />} />
+            <Route
+              path="/console"
+              element={
+                <ConsoleView
+                  lastMessage={lastMessage}
+                  send={send}
+                  translation={defaultTranslation || "KJV"}
+                  transcriptLines={transcriptLines}
+                  suggestion={suggestion}
+                  candidates={candidates}
+                  onConfirm={confirmSuggestion}
+                  onDismissSuggestion={() => setSuggestion(null)}
+                  onDismissCandidates={() => setCandidates(null)}
+                />
+              }
             />
-          </label>
-          <label className="flex flex-col text-xs text-neutral-600 dark:text-neutral-300">
-            Chapter
-            <input
-              value={verseQuery.chapter}
-              onChange={(e) => setVerseQuery({ ...verseQuery, chapter: e.target.value })}
-              className={`w-16 ${inputClass}`}
+            <Route
+              path="/library"
+              element={
+                <LibraryView
+                  verseQuery={verseQuery}
+                  setVerseQuery={setVerseQuery}
+                  verseResult={verseResult}
+                  verseError={verseError}
+                  onSearchVerse={searchVerse}
+                  onConfirmVerse={confirmVerse}
+                  songQuery={songQuery}
+                  setSongQuery={setSongQuery}
+                  songResults={songResults}
+                  songError={songError}
+                  onSearchSongs={searchSongs}
+                  onConfirmSong={confirmSong}
+                />
+              }
             />
-          </label>
-          <label className="flex flex-col text-xs text-neutral-600 dark:text-neutral-300">
-            Verse
-            <input
-              value={verseQuery.verse}
-              onChange={(e) => setVerseQuery({ ...verseQuery, verse: e.target.value })}
-              className={`w-16 ${inputClass}`}
+            <Route
+              path="/settings"
+              element={
+                <SettingsView
+                  defaultTranslation={defaultTranslation}
+                  setDefaultTranslation={setDefaultTranslation}
+                  activeService={activeService}
+                  serviceError={serviceError}
+                  onStart={startService}
+                  onClear={clearService}
+                />
+              }
             />
-          </label>
-          <label className="flex flex-col text-xs text-neutral-600 dark:text-neutral-300">
-            Translation
-            <select
-              value={verseQuery.translation}
-              onChange={(e) => setVerseQuery({ ...verseQuery, translation: e.target.value })}
-              className={inputClass}
-            >
-              <option>KJV</option>
-              <option>ASV</option>
-              <option>YLT</option>
-              <option>WEB</option>
-            </select>
-          </label>
-          <button
-            type="submit"
-            className="rounded-lg bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-600"
-          >
-            Search
-          </button>
-        </form>
-        {verseError && <p className="text-sm text-red-600">{verseError}</p>}
-        {verseResult && (
-          <div className={cardClass}>
-            <p className="text-sm text-neutral-800 dark:text-neutral-100">
-              <span className="font-semibold">
-                {verseResult.book} {verseResult.chapter}:{verseResult.verse} ({verseResult.translation})
-              </span>{" "}
-              — {verseResult.text}
-            </p>
-            <button type="button" onClick={confirmVerse} className={confirmButtonClass}>
-              Confirm
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold text-neutral-500 dark:text-neutral-400">
-          Manual song search (Phase 03)
-        </h2>
-        <form onSubmit={searchSongs} className="flex gap-2">
-          <input
-            value={songQuery}
-            onChange={(e) => setSongQuery(e.target.value)}
-            placeholder="Song title..."
-            className={inputClass}
-          />
-          <button
-            type="submit"
-            className="rounded-lg bg-orange-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-600"
-          >
-            Search
-          </button>
-        </form>
-        {songError && <p className="text-sm text-red-600">{songError}</p>}
-        <ul className="flex flex-col gap-2">
-          {songResults.map((song) => (
-            <li key={song.id} className={cardClass}>
-              <span className="text-sm text-neutral-800 dark:text-neutral-100">{song.title}</span>
-              <button type="button" onClick={() => confirmSong(song)} className={confirmButtonClass}>
-                Confirm
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <LiveTranscript lastMessage={lastMessage} />
-
-      <section className="flex flex-col gap-1 border-t border-neutral-300 pt-3 text-xs text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-        <p>Backend WebSocket: {connected ? "connected" : "disconnected"}</p>
-        {lastMessage !== null && (
-          <pre className="overflow-x-auto rounded bg-neutral-200 p-2 dark:bg-neutral-800">
-            {JSON.stringify(lastMessage, null, 2)}
-          </pre>
-        )}
-      </section>
-    </main>
+            <Route path="*" element={<Navigate to="/console" replace />} />
+          </Routes>
+        </div>
+      </main>
+    </div>
   );
 }
 

@@ -25,3 +25,13 @@ class SongSummary(BaseModel):
 
 class SongOut(SongSummary):
     lines: list[SongLineOut]
+
+
+class SheetErrorOut(BaseModel):
+    tab: str
+    problem: str
+
+
+class SongSheetImportResult(BaseModel):
+    imported: list[SongSummary]
+    errors: list[SheetErrorOut]

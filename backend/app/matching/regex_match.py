@@ -171,6 +171,48 @@ def _fuzzy_match_book(guess: str) -> str | None:
     return ranked[0][0]
 
 
+# A spoken translation name alongside a reference (PDD §8: "John 3:16 in the
+# King James"). Requires a lead-in phrase ("in the", "from the", "using the")
+# rather than matching the bare name anywhere in the line -- "WEB" in
+# particular is also an ordinary English word ("a web of lies"), and without
+# the lead-in requirement, unrelated speech containing that word would be
+# misread as a translation callout. The other three abbreviations aren't real
+# words, but the same lead-in requirement is applied uniformly rather than
+# carving out a special case per alias.
+_TRANSLATION_ALIASES = {
+    "kjv": "KJV",
+    "king james": "KJV",
+    "king james version": "KJV",
+    "asv": "ASV",
+    "american standard": "ASV",
+    "american standard version": "ASV",
+    "ylt": "YLT",
+    "young's literal": "YLT",
+    "youngs literal": "YLT",
+    "young's literal translation": "YLT",
+    "youngs literal translation": "YLT",
+    "web": "WEB",
+    "world english bible": "WEB",
+}
+_TRANSLATION_PATTERN = "|".join(re.escape(form) for form in sorted(_TRANSLATION_ALIASES, key=len, reverse=True))
+_TRANSLATION_RE = re.compile(
+    rf"\b(?:in|from|using)\s+the\s+(?P<translation>{_TRANSLATION_PATTERN})\b", re.IGNORECASE
+)
+
+
+def detect_translation(text: str) -> str | None:
+    """Finds an explicitly named translation anywhere in the line.
+
+    Independent of `parse_reference_candidates` -- the translation name
+    doesn't have to sit right next to the reference itself ("Turn to John
+    3:16. Let's read that in the King James.").
+    """
+    match = _TRANSLATION_RE.search(text)
+    if match is None:
+        return None
+    return _TRANSLATION_ALIASES[match.group("translation").lower()]
+
+
 @dataclass
 class ParsedReference:
     book: str
@@ -234,3 +276,35 @@ def parse_reference(text: str) -> ParsedReference | None:
     tests) that don't need to try DB fallbacks for the ambiguous case."""
     candidates = parse_reference_candidates(text)
     return candidates[0] if candidates else None
+
+
+def parse_reference_sequence(text: str) -> list[ParsedReference]:
+    """Detects two or more references named in the same utterance (PDD §5.6:
+    "Genesis 1:1, then Genesis 10:12, and Romans 8:28"), for the reading
+    queue. A single reference is `parse_reference_candidates`'s job, not this
+    one -- this returns an empty list whenever fewer than 2 are found, so a
+    caller can treat that as "not a sequence" without a separate count check.
+
+    Reuses the same reference primitives `parse_reference_candidates` is
+    built on (`_REFERENCE_RE`, `_candidates_from_match`) rather than a second
+    parser, per this phase's own guardrail. Only the strict, exact-book-name
+    pattern is scanned per slot, not the fuzzy mishearing fallback -- a
+    preacher deliberately listing several verses to read is, in practice,
+    clearer speech than a single mumbled reference, and scanning one
+    utterance for multiple *fuzzy* matches compounds false-positive risk in a
+    way a single fuzzy match doesn't. For the rare bare-3-digit ambiguous
+    slot ("Genesis 316"), only the more-likely reading is kept -- trying every
+    combination across multiple ambiguous slots isn't worth the complexity
+    when the caller validates every reference against the real database
+    anyway and drops whatever doesn't resolve.
+    """
+    matches = list(_REFERENCE_RE.finditer(text))
+    if len(matches) < 2:
+        return []
+
+    references = []
+    for match in matches:
+        canonical_book = _BOOK_ALTERNATIVES[match.group("book").lower()]
+        candidates = _candidates_from_match(canonical_book, match.group("chapter"), match.group("verse"), text, match)
+        references.append(candidates[0])
+    return references

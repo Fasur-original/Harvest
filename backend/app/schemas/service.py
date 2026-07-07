@@ -5,6 +5,7 @@ from app.schemas.song import SongSummary
 
 class ServiceSetStart(BaseModel):
     song_ids: list[int]
+    default_translation: str | None = None
 
 
 class ServiceSetOut(BaseModel):
@@ -12,3 +13,4 @@ class ServiceSetOut(BaseModel):
 
     id: int
     songs: list[SongSummary]
+    default_translation: str | None = None

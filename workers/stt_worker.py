@@ -70,12 +70,14 @@ class STTWorker:
         max_chunk_seconds: float,
         silence_ms: int,
         cpu_threads: int = 0,
+        beam_size: int = 1,
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._language = language
         self._cpu_threads = cpu_threads
+        self._beam_size = beam_size
         self._min_chunk_frames = int(min_chunk_seconds * SAMPLE_RATE)
         self._max_chunk_frames = int(max_chunk_seconds * SAMPLE_RATE)
         self._vad_options = VadOptions(min_silence_duration_ms=silence_ms)
@@ -217,7 +219,13 @@ class STTWorker:
         segments, _ = model.transcribe(
             audio,
             vad_filter=True,
+            # Reuse the same pause-length tuning already applied to chunk
+            # boundaries above, rather than leaving this at faster-whisper's
+            # own unrelated default (2000ms) -- the two VAD passes disagreeing
+            # on what counts as a pause has no benefit here.
+            vad_parameters=self._vad_options,
             language=self._language,
             initial_prompt=CHURCH_VOCABULARY_PROMPT,
+            beam_size=self._beam_size,
         )
         return " ".join(segment.text.strip() for segment in segments).strip()

@@ -11,7 +11,11 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from app.config import settings
+from app.data.reading_queue import create_reading_queue, sync_current_to_reference
+from app.database import AsyncSessionLocal
+from app.matching import display_state
 from app.matching.pipeline import find_match
+from app.schemas.reading_queue import ReadingQueueOut
 from app.ws import manager
 
 # workers/ sits at the repo root, a sibling of backend/ (PDD §11), not under
@@ -34,6 +38,7 @@ worker = STTWorker(
     max_chunk_seconds=settings.TRANSCRIPT_MAX_CHUNK_SECONDS,
     silence_ms=settings.TRANSCRIPT_SILENCE_MS,
     cpu_threads=settings.WHISPER_CPU_THREADS,
+    beam_size=settings.WHISPER_BEAM_SIZE,
 )
 
 _broadcast_task: asyncio.Task | None = None
@@ -52,6 +57,57 @@ async def _broadcast_loop() -> None:
             # didn't resolve -- clear any stale pending suggestion so it
             # doesn't look like it corresponds to what was just said (Phase 06).
             await manager.send_to_all({"type": "no_match"})
+            continue
+        if match["kind"] == "reading_queue_announced":
+            # The preacher named several references at once (PDD §5.6) --
+            # build the queue and push it to the operator console. Doesn't
+            # go through the suggestion/confirm path at all, since naming a
+            # sequence to read isn't itself a request to display any one of
+            # them yet.
+            async with AsyncSessionLocal() as db:
+                queue = await create_reading_queue(db, match["references"])
+            await manager.send_to_all({"type": "reading_queue", **ReadingQueueOut.model_validate(queue).model_dump()})
+            continue
+        if match["kind"] == "verse":
+            # Whenever a confident single verse is detected -- named directly
+            # or the wording matched via embedding -- check whether it's one
+            # of the active reading queue's entries, and if so, move the
+            # queue's "now reading" pointer to it (PDD: the preacher may read
+            # the queue in a different order than it was announced in). This
+            # runs regardless of the suppression check right below: tracking
+            # where the preacher actually is in the queue isn't the same
+            # question as whether to bother the operator with another
+            # suggestion popup for a verse already on screen.
+            async with AsyncSessionLocal() as db:
+                queue = await sync_current_to_reference(db, match["book"], match["chapter"], match["verse"])
+            if queue is not None:
+                await manager.send_to_all(
+                    {"type": "reading_queue", **ReadingQueueOut.model_validate(queue).model_dump()}
+                )
+
+            if display_state.is_currently_displayed_verse(match["book"], match["chapter"], match["verse"]):
+                # The preacher is quoting or explaining a verse already
+                # confirmed onto the display, not asking for a new lookup --
+                # re-suggesting the exact same verse on every re-quote or
+                # paraphrase while it's being taught on would just be noise
+                # the operator has to keep dismissing. A genuinely different
+                # verse (or a song) still suggests normally; only an
+                # identical repeat is suppressed.
+                continue
+        if match["kind"] == "candidates":
+            # Same "already displayed" suppression as a single suggestion,
+            # applied per-candidate -- a half-remembered paraphrase landing in
+            # the ranked-list band could still happen to include the verse
+            # already on screen among its options.
+            candidates = [
+                c
+                for c in match["candidates"]
+                if not (c["kind"] == "verse" and display_state.is_currently_displayed_verse(
+                    c["book"], c["chapter"], c["verse"]
+                ))
+            ]
+            if candidates:
+                await manager.send_to_all({"type": "candidates", "candidates": candidates})
             continue
         await manager.send_to_all({"type": "suggestion", **match})
 

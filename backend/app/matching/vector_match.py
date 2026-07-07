@@ -126,8 +126,19 @@ def embed_query(text: str) -> bytes:
     return to_blob(model.encode([text], normalize_embeddings=True)[0].tolist())
 
 
-def search_by_vector(query_vector: bytes, scope: Scope, top_k: int = 5) -> list[MatchCandidate]:
-    """Same as `search_by_embedding`, but takes an already-embedded query."""
+def search_by_vector(
+    query_vector: bytes, scope: Scope, top_k: int = 5, song_ids: list[int] | None = None
+) -> list[MatchCandidate]:
+    """Same as `search_by_embedding`, but takes an already-embedded query.
+
+    `song_ids` restricts the "songs" scope to a specific set of songs (PDD
+    §10.5: check today's uploaded set before the full permanent library).
+    Ignored for "verses" -- there's no equivalent per-service scoping for
+    verses, which are shared across every install. Filtered in Python after
+    an over-fetched KNN pass rather than pushed into the vec0 query itself,
+    so this doesn't depend on whatever filtering syntax a given sqlite-vec
+    version does or doesn't support.
+    """
     model = _ensure_model()
     conn = get_connection()
     try:
@@ -158,9 +169,11 @@ def search_by_vector(query_vector: bytes, scope: Scope, top_k: int = 5) -> list[
                     )
                 )
         else:
+            allowed = set(song_ids) if song_ids is not None else None
+            fetch_k = top_k if allowed is None else max(top_k * 10, 50)
             rows = conn.execute(
                 "SELECT rowid, distance FROM song_line_vectors WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-                (query_vector, top_k),
+                (query_vector, fetch_k),
             ).fetchall()
             for rowid, distance in rows:
                 line_row = conn.execute(
@@ -169,6 +182,8 @@ def search_by_vector(query_vector: bytes, scope: Scope, top_k: int = 5) -> list[
                 if line_row is None:
                     continue
                 song_id, line_number, line_text = line_row
+                if allowed is not None and song_id not in allowed:
+                    continue
                 candidates.append(
                     MatchCandidate(
                         kind="songs",
@@ -178,13 +193,17 @@ def search_by_vector(query_vector: bytes, scope: Scope, top_k: int = 5) -> list[
                         line_number=line_number,
                     )
                 )
+                if len(candidates) >= top_k:
+                    break
 
         return candidates
     finally:
         conn.close()
 
 
-def search_by_embedding(text: str, scope: Scope, top_k: int = 5) -> list[MatchCandidate]:
+def search_by_embedding(
+    text: str, scope: Scope, top_k: int = 5, song_ids: list[int] | None = None
+) -> list[MatchCandidate]:
     """Returns the closest matches above sqlite-vec's own floor, ranked by score.
 
     An empty result means the index for that scope has nothing in it yet
@@ -192,4 +211,4 @@ def search_by_embedding(text: str, scope: Scope, top_k: int = 5) -> list[MatchCa
     single-scope search; see `embed_query`/`search_by_vector` if searching
     more than one scope for the same text.
     """
-    return search_by_vector(embed_query(text), scope, top_k)
+    return search_by_vector(embed_query(text), scope, top_k, song_ids=song_ids)

@@ -14,4 +14,6 @@ sounddevice
 numpy
 sentence-transformers
 sqlite-vec
+openpyxl
+python-multipart
 pyinstaller

@@ -29,6 +29,24 @@ The distinction between (2) and (3) matters and was deliberate: broadcasting "no
 - Embedding path re-verified unaffected by the pipeline change (Psalm 23:1 paraphrase still resolves at 0.97 confidence).
 - Frontend type-checks and production build both clean with the new `no_match` handling in `SuggestedMatch.tsx`.
 
+## Being conscious of the preacher's intent (later addition)
+
+Requested: the system needed to tell "a fresh reference is being called out" apart from "the preacher is still explaining/re-quoting the verse already confirmed onto the display" — re-teaching the same passage naturally involves reading it again, paraphrasing it, and citing its reference again out loud, none of which is a request for a *new* lookup.
+
+Built as a small, explainable rule rather than any kind of intent classifier, consistent with this app's "regex then embeddings, nothing fuzzier than necessary" philosophy:
+
+- **`app/matching/display_state.py`** (new) tracks the one verse currently confirmed onto the audience display — an in-process module-level singleton, same pattern as `app.ws`'s `ConnectionManager`. `main.py`'s `/ws` handler calls `display_state.record_confirmed(data)` on every `{"action": "confirm", ...}` message (the same message that already triggers the projector push), before relaying it. Confirming a verse records `(book, chapter, verse)`; confirming a song, or confirming nothing yet, clears it.
+- **`app/routes/transcript.py`**'s broadcast loop now checks, for any verse match (regex *or* embedding — a paraphrase mid-sermon is just as much "still explaining the same verse" as a literal re-quote): if it's the exact same verse already confirmed, skip broadcasting a new suggestion. A genuinely different verse, or a song, still suggests normally — only an identical repeat while it's the live confirmed content is suppressed.
+- `POST /service/start` and `POST /service/clear` both call `display_state.clear()` — a new or ended service shouldn't carry forward stale "currently displayed" tracking from before.
+
+This directly answers the three-way distinction asked for: singing is already routed to the "songs" embedding scope structurally (Phase 05/07's scope split, nothing new needed there); a fresh reference call-out still suggests immediately (regex, instant); and continued exposition of an already-confirmed verse now goes quiet instead of re-suggesting itself on every paraphrase.
+
+**Verified directly** against a live backend and the real dev database: confirming John 3:16, then re-running `find_match` on `"John 3:16 in the King James"` → correctly identified as "would suppress." Re-running on `"John 3:17"` (a genuinely different verse) → correctly *not* suppressed. Confirming a song afterward → correctly cleared the tracked verse, so a subsequent match on John 3:16 was no longer suppressed.
+
+### Code quality guardrails (addition)
+
+- `find_match()` stays a pure matching function with no knowledge of display state — the suppression check lives entirely in `transcript.py`, the layer that already turns a match into a broadcast decision (it already did exactly this for the `unresolved_reference` → `no_match` translation in the base phase above).
+
 ## Code quality guardrails
 
 - Still exactly one function triggers a projector push (`manager.send_to_all`, called identically regardless of whether the confirm came from manual search, a Phase 05 suggestion, or — later — a Phase 09 ranked candidate or queue entry).

@@ -11,12 +11,14 @@ from sqlalchemy.orm import selectinload
 from app.models import ServiceSet, Song
 
 
-async def start_service_set(db: AsyncSession, song_ids: list[int]) -> ServiceSet:
+async def start_service_set(
+    db: AsyncSession, song_ids: list[int], default_translation: str | None = None
+) -> ServiceSet:
     """Marks today's active song set, replacing any set already active."""
     await clear_service_set(db)
 
     result = await db.execute(select(Song).where(Song.id.in_(song_ids)))
-    service_set = ServiceSet(songs=list(result.scalars()))
+    service_set = ServiceSet(songs=list(result.scalars()), default_translation=default_translation)
     db.add(service_set)
     await db.commit()
     await db.refresh(service_set, attribute_names=["songs"])

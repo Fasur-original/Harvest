@@ -1,30 +1,51 @@
 # Phase 07 — Song Ingestion Workflow
 
-## What to accomplish
+**Status: Complete.**
 
-- `parse_song_sheet` (§6.1, §10.2), implemented for real this time (Phase 03 stubbed it): reads one uploaded workbook per service, treats each **tab** as one song (tab name = title), validates the expected columns (`line_number`, `line_text`, `repeat_count`) per tab using `openpyxl`.
-- Validation errors name the exact tab and exact problem (duplicate tab name, missing column) rather than failing generically — PDD §10.3 calls this out specifically as a requirement, not a nice-to-have.
-- `save_song` stores the parsed lines and triggers per-line embedding (feeding the same embedding infrastructure Phase 05 built for verses).
-- `UploadSongSheet.tsx` (primary flow) and `QuickAddSong.tsx` (paste-and-embed fallback for mid-service exceptions, §10.4) — both end up calling the same `save_song`, not two different storage paths.
-- Search scoping per §10.5: check today's uploaded set first, fall back to the full permanent song library only if nothing in today's set matches well.
+## A deliberate deviation from the PDD's proposed column layout
 
-## Objective
+Asked upfront: design the sheet format to be easy to parse *and* not tedious for whoever fills it in. The PDD's own proposed layout (§10) included a `line_number` column — typing a sequential number on every single row, and keeping it in sync if a line ever gets reordered, is exactly the kind of manual bookkeeping worth designing out. **Line order now comes from row order instead** — whoever fills in the sheet just types lyrics top to bottom, nothing else. `repeat_count` is optional and defaults to 1 when blank, so it only needs filling in on the rare line that actually repeats (a chorus sung 3x), not on every row.
 
-Make getting song content into the system fast enough that it's not the weekly bottleneck — per PDD §10, this is "a data-entry and speed problem, not a training problem." A church that has to hand-type lyrics every week won't keep using the app.
+Final format per tab: a header row with `line_text` (required) and `repeat_count` (optional), then one lyric line per row. Verified this parses correctly and defaults `repeat_count` to 1 exactly as intended (test workbook: a tab with an explicit `repeat_count` column had one row correctly repeat_count=2 and the rest defaulted to 1; a second tab with *no* `repeat_count` column at all had every line default to 1).
 
-## Expected outcomes
+One tab looks like this (tab name = song title):
 
-- Uploading a workbook with N tabs produces N songs, each with ordered lines and a `repeat_count`, each line embedded and searchable.
-- A malformed tab (bad column, duplicate name) produces a specific, actionable error before the service starts — not a mid-service surprise.
-- A song matched during a live service is found first from today's uploaded set, and only falls back to the full library if nothing in today's set scores well.
-- `QuickAddSong.tsx` and `UploadSongSheet.tsx` both land in the same DB rows via the same `save_song` call — no separate quick-add storage table or shape.
+| line_text | repeat_count |
+| --- | --- |
+| Amazing grace, how sweet the sound | |
+| That saved a wretch like me | |
+| I once was lost, but now am found | 3 |
+| Was blind, but now I see | |
+
+Blank `repeat_count` cells default to 1; only fill it in for a line sung more than once.
+
+Since a table in a doc isn't the same as seeing the real thing, added a **`GET /songs/template`** endpoint (`build_song_sheet_template` in `app/data/songs.py`) that returns a real, downloadable `.xlsx` with exactly the example above pre-filled in a tab named "Example Song (copy this tab)" — right-click → duplicate that tab per new song rather than building the column layout from memory each time. Verified the generated template is self-consistent: feeding it straight back into `parse_song_sheet` parses 1 song / 0 errors. Both `UploadSongSheet.tsx` (a "Download a blank template" link, plus the same table inlined above the file picker) and `QuickAddSong.tsx` (a plain-text worked example above the textarea, since quick-add has no `repeat_count` field — repeats are just typed out as repeated rows) now show this structure directly in the UI instead of leaving it to a placeholder string or separate documentation.
+
+## What was built
+
+- **`app/data/songs.py`**: `parse_song_sheet(file)` — reads a workbook via `openpyxl`, treats each tab as one song (tab name = title), validates the header row per tab independently. **Best-effort partial import** (your call): a malformed tab (missing `line_text` column, a non-numeric `repeat_count`, a duplicate tab name) is recorded as an error naming that exact tab and problem, and skipped — it does not fail the other, valid tabs in the same workbook. Duplicate tab names are checked explicitly rather than assumed impossible — confirmed via direct testing that the xlsx format doesn't actually prevent two sheets sharing a name (openpyxl allows constructing one), so this validation is a real, meaningful check, not defensive-programming theater.
+- **`save_song` now upserts by title** — re-uploading a song already in the permanent library (a real scenario: a repeat song accidentally included in a new week's workbook) replaces its lines instead of creating a duplicate entry that would clutter search and matching. Uses the existing `cascade="all, delete-orphan"` on `Song.lines` to replace cleanly.
+- **`POST /songs/upload`** — accepts a multipart `.xlsx` file, parses it, saves every valid tab via the same `save_song` Phase 03 already built, then triggers **one batched embedding call** for the whole workbook (not one per song) via Phase 05's `embed_and_store_song_lines`. Returns the import result: which songs were imported, and the exact tab/problem for anything skipped.
+- **`POST /songs`** (Phase 03's existing quick-add-compatible endpoint) now also triggers embedding after save — previously songs created this way were saved but never became searchable via the matching pipeline, since nothing called the Phase 05 embedding step. Both entry paths call the exact same `save_song` and the exact same embedding function; no separate quick-add storage shape.
+- **Today's-set-first search scoping (PDD §10.5)**, added to `app/matching/pipeline.py`: song search now checks the current service's active set first (if one exists and has songs), only falling back to the full permanent library if nothing in today's set clears the confidence threshold. Implemented in `search_by_vector` via an optional `song_ids` filter, applied by over-fetching from the vec0 index and filtering in Python rather than depending on whatever WHERE-clause filtering syntax a given `sqlite-vec` version does or doesn't support.
+- **`desktop/src/operator/UploadSongSheet.tsx`** (primary flow) and **`QuickAddSong.tsx`** (mid-service fallback, PDD §10.4) — both call into the same backend paths above; no separate frontend-side storage logic either.
+
+## Verification performed
+
+Built a real test workbook (3 tabs: one with explicit `repeat_count` values, one with the column omitted entirely, one deliberately broken with a wrong column name) and ran the full path end-to-end against a live backend:
+
+- Upload correctly imported the 2 valid songs and reported exactly one error naming the broken tab and the missing column.
+- `song_line_vectors` gained exactly 6 rows (4 + 2 lines) — embedding triggered correctly on upload.
+- Manual search (`GET /songs?q=`) found the imported song.
+- `find_match` correctly resolved a paraphrase of each uploaded song's lyrics to the right song, at ~0.98 confidence.
+- Today's-set scoping: after starting a service set containing only one of the two uploaded songs, a paraphrase of *that* song still resolved correctly (today's-set-first path), and a paraphrase of the *other* uploaded song (not in today's set) still resolved correctly too — proving the fallback to the full library actually works, not just the primary scoped path.
+- Frontend type-checks and production build both clean.
 
 ## Code quality guardrails
 
-- One parser, one validator, one storage function (`save_song`) regardless of entry path (workbook upload vs. quick-add paste).
-- Song matching still calls the exact same `search_by_embedding` from Phase 05 — this phase adds data, it does not add a second matching implementation for songs.
+- One parser (`parse_song_sheet`), one storage function (`save_song`), one embedding trigger (`embed_and_store_song_lines`) — used identically by both the workbook-upload path and the quick-add fallback. No second storage shape or second matching implementation for songs.
+- `search_by_vector`'s scoping filter only applies to the "songs" scope; verses remain unscoped, since there's no per-service concept for shared verse data.
 
 ## Inputs needed from you
 
-- **A real sample song-sheet workbook from the choir.** PDD §16 flags this directly: the `line_number` / `line_text` / `repeat_count` column layout is a *proposed* default, not confirmed against what the choir actually produces. Building the parser against a guessed format risks a rewrite later — a real sample file (even a small one) should come before `parse_song_sheet` is finalized.
-- **Reject-outright vs. best-effort partial import.** Also an open PDD question (§16): if a workbook has one broken tab among ten good ones, should the whole upload fail, or should the nine good tabs import with a report on the broken one?
+Both of the PDD's open questions for this phase are now resolved: the column layout was redesigned per your stated priority (easy to parse, low tedium) rather than kept as originally proposed, and malformed uploads use best-effort partial import per your choice. Nothing blocking remains.
