@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
+from app.data.verses import get_verse
 from app.models import ReadingQueue, ReadingQueueEntry
 
 
@@ -83,3 +85,34 @@ async def sync_current_to_reference(db: AsyncSession, book: str, chapter: int, v
     await db.commit()
     await db.refresh(queue, attribute_names=["entries"])
     return queue
+
+
+async def update_reading_queue_entry(
+    db: AsyncSession, entry_id: int, book: str, chapter: int, verse: int
+) -> tuple[ReadingQueueEntry, bool] | None:
+    """Corrects a queue entry's reference in place (a preacher's spoken
+    reference gets mis-transcribed sometimes -- "John 3:16" heard as "John
+    13:16" -- and the fix shouldn't require discarding the whole queue entry
+    and starting over).
+
+    Validates the corrected reference resolves to a real verse first (same
+    existence check a fresh sequence announcement gets) -- an edit that
+    doesn't exist is worse than no edit at all. Returns `(entry, is_current)`
+    so the caller (the route) knows whether to also push a corrected display
+    update, or `None` if the entry doesn't exist or the correction doesn't
+    resolve to a real verse.
+    """
+    entry = await db.get(ReadingQueueEntry, entry_id)
+    if entry is None:
+        return None
+
+    if await get_verse(db, book, chapter, verse, settings.MATCH_DEFAULT_TRANSLATION) is None:
+        return None
+
+    entry.book, entry.chapter, entry.verse = book, chapter, verse
+    await db.commit()
+    await db.refresh(entry)
+
+    queue = await db.get(ReadingQueue, entry.reading_queue_id)
+    is_current = queue is not None and queue.current_entry_id == entry.id
+    return entry, is_current

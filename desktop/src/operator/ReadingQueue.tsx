@@ -1,160 +1,180 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Circle, PlayCircle } from "lucide-react";
+import { CheckCircle2, Circle, Pencil, PlayCircle } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { useQueueStore } from "@/store/queue-store";
+import { useServiceStore } from "@/store/service-store";
+import type { ReadingQueueEntryData } from "@/lib/ws-messages";
 
-const API_BASE = "http://localhost:8000";
+function EditEntryForm({
+  entry,
+  onSave,
+  onCancel,
+}: {
+  entry: ReadingQueueEntryData;
+  onSave: (book: string, chapter: number, verse: number) => Promise<string | null>;
+  onCancel: () => void;
+}) {
+  const [book, setBook] = useState(entry.book);
+  const [chapter, setChapter] = useState(String(entry.chapter));
+  const [verse, setVerse] = useState(String(entry.verse));
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-type Entry = {
-  id: number;
-  position: number;
-  book: string;
-  chapter: number;
-  verse: number;
-};
+  async function save() {
+    setSaving(true);
+    setError(null);
+    const err = await onSave(book, Number(chapter), Number(verse));
+    setSaving(false);
+    if (err) {
+      setError(err);
+      toast.error(err);
+    } else {
+      toast.success("Reference corrected");
+    }
+  }
 
-type Queue = {
-  id: number;
-  entries: Entry[];
-  current_entry_id: number | null;
-};
-
-type ReadingQueueMessage = Queue & { type: "reading_queue" };
-
-function isReadingQueueMessage(message: unknown): message is ReadingQueueMessage {
-  if (typeof message !== "object" || message === null) return false;
-  return (message as Record<string, unknown>).type === "reading_queue";
+  return (
+    <div className="bg-primary/5 border-primary/30 flex flex-col gap-2 rounded-xl border p-3">
+      <p className="text-muted-foreground text-xs font-medium">Correct a mis-transcribed reference</p>
+      <div className="flex gap-2">
+        <Input value={book} onChange={(e) => setBook(e.target.value)} placeholder="Book" className="min-w-0 flex-1" />
+        <Input value={chapter} onChange={(e) => setChapter(e.target.value)} placeholder="Ch" className="w-14" />
+        <Input value={verse} onChange={(e) => setVerse(e.target.value)} placeholder="Vs" className="w-14" />
+      </div>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+      <div className="flex gap-2">
+        <Button size="sm" onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 // Shown when the preacher names several references at once ("Genesis 1:1,
 // then Genesis 10:12, and Romans 8:28"). The operator can jump to any entry,
-// in any order, not just step through them one at a time -- the preacher may
-// read the queue out of the order it was announced in. Live speech naming
-// one of these references also moves the "now reading" highlight
-// automatically (see app/routes/transcript.py's `sync_current_to_reference`)
-// -- this UI just reflects whichever one wins, whether that came from speech
-// or a manual click here.
-function ReadingQueue({
-  lastMessage,
-  send,
-  translation,
-}: {
-  lastMessage: unknown;
-  send: (data: unknown) => void;
-  translation: string;
-}) {
-  const [queue, setQueue] = useState<Queue | null>(null);
-  const [error, setError] = useState<string | null>(null);
+// in any order -- the preacher may read the queue out of the order it was
+// announced in. Live speech naming one of these references also moves the
+// "now reading" highlight automatically -- this UI just reflects whichever
+// one wins, whether that came from speech or a manual click here. Each
+// entry can also be corrected in place (the pencil icon) if STT
+// mis-transcribed the reference.
+function ReadingQueue() {
+  const queue = useQueueStore((s) => s.readingQueue);
+  const error = useQueueStore((s) => s.error);
+  const fetchReadingQueue = useQueueStore((s) => s.fetchReadingQueue);
+  const jumpToVerse = useQueueStore((s) => s.jumpToVerse);
+  const editReadingQueueEntry = useQueueStore((s) => s.editReadingQueueEntry);
+  const clearReadingQueue = useQueueStore((s) => s.clearReadingQueue);
+  const defaultTranslation = useServiceStore((s) => s.defaultTranslation);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   useEffect(() => {
-    if (isReadingQueueMessage(lastMessage)) {
-      const { id, entries, current_entry_id } = lastMessage;
-      setQueue({ id, entries, current_entry_id });
-    }
-  }, [lastMessage]);
-
-  useEffect(() => {
-    // Picks up a queue already announced before this window was opened,
-    // same reasoning as the active-service fetch on mount elsewhere.
-    fetch(`${API_BASE}/reading-queue/active`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => data && setQueue(data))
-      .catch(() => {});
-  }, []);
-
-  async function jumpTo(entry: Entry) {
-    setError(null);
-    const params = new URLSearchParams({
-      book: entry.book,
-      chapter: String(entry.chapter),
-      verse: String(entry.verse),
-      translation,
-    });
-    const res = await fetch(`${API_BASE}/bible/verse?${params}`);
-    if (!res.ok) {
-      setError(`Error ${res.status}`);
-      return;
-    }
-    const verse = await res.json();
-    // Same confirm action every other match/search path already uses -- the
-    // backend's confirm handler is what actually moves the queue's "now
-    // reading" pointer, so this doesn't duplicate that logic here.
-    send({ action: "confirm", kind: "verse", ...verse });
-  }
-
-  async function clearQueue() {
-    setError(null);
-    const res = await fetch(`${API_BASE}/reading-queue/clear`, { method: "POST" });
-    if (!res.ok) {
-      setError(`Error ${res.status}`);
-      return;
-    }
-    setQueue(null);
-  }
+    fetchReadingQueue();
+  }, [fetchReadingQueue]);
 
   if (queue === null || queue.entries.length === 0) {
     return (
-      <section className="flex h-fit flex-col gap-1.5 rounded-2xl border border-dashed border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900/40">
-        <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Reading Queue</h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400">
-          Naming several verses at once (&ldquo;Genesis 1:1, then Romans 8:28…&rdquo;) builds a queue here.
-        </p>
-      </section>
+      <Card className="h-fit border-dashed">
+        <CardHeader>
+          <CardTitle className="text-sm">Reading Queue</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground text-xs">
+            Naming several verses at once (&ldquo;Genesis 1:1, then Romans 8:28…&rdquo;) builds a queue here.
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   const currentIndex = queue.entries.findIndex((e) => e.id === queue.current_entry_id);
 
   return (
-    <section className="flex h-fit flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Reading Queue</h2>
-        <button
-          type="button"
-          onClick={clearQueue}
-          className="text-xs font-medium text-neutral-400 hover:text-red-500"
+    <Card className="h-fit">
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm">Reading Queue</CardTitle>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground hover:text-destructive"
+          onClick={() => {
+            clearReadingQueue();
+            toast("Reading queue cleared");
+          }}
         >
           Clear
-        </button>
-      </div>
-      <div className="flex flex-col gap-2">
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
         {queue.entries.map((entry, i) => {
           const isCurrent = entry.id === queue.current_entry_id;
           const isRead = currentIndex >= 0 && i < currentIndex;
+
+          if (editingId === entry.id) {
+            return (
+              <EditEntryForm
+                key={entry.id}
+                entry={entry}
+                onSave={(book, chapter, verse) => editReadingQueueEntry(entry.id, book, chapter, verse).then((err) => {
+                  if (!err) setEditingId(null);
+                  return err;
+                })}
+                onCancel={() => setEditingId(null)}
+              />
+            );
+          }
+
           return (
-            <button
+            <div
               key={entry.id}
-              type="button"
-              onClick={() => jumpTo(entry)}
-              className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+              className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors ${
                 isCurrent
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                  : "border-neutral-200 bg-neutral-50 hover:border-orange-300 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-orange-800"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted/40 hover:border-primary/40 border-transparent"
               }`}
             >
-              {isCurrent ? (
-                <PlayCircle size={16} className="shrink-0" />
-              ) : isRead ? (
-                <CheckCircle2 size={16} className="shrink-0 text-green-500" />
-              ) : (
-                <Circle size={16} className="shrink-0 text-neutral-300 dark:text-neutral-700" />
-              )}
-              <span className="flex-1">
-                <span className="block text-sm font-semibold">
-                  {entry.book} {entry.chapter}:{entry.verse}
+              <button
+                type="button"
+                onClick={() => jumpToVerse(entry.book, entry.chapter, entry.verse, defaultTranslation || "KJV")}
+                className="flex flex-1 items-center gap-3 text-left"
+              >
+                {isCurrent ? (
+                  <PlayCircle size={16} className="shrink-0" />
+                ) : isRead ? (
+                  <CheckCircle2 size={16} className="shrink-0 text-green-500" />
+                ) : (
+                  <Circle size={16} className="text-muted-foreground/40 shrink-0" />
+                )}
+                <span className="flex-1">
+                  <span className="block text-sm font-semibold">
+                    {entry.book} {entry.chapter}:{entry.verse}
+                  </span>
+                  <span className={`block text-[11px] tracking-wide uppercase ${isCurrent ? "opacity-70" : "text-muted-foreground"}`}>
+                    {isCurrent ? "Now reading" : isRead ? "Read" : "Pending"}
+                  </span>
                 </span>
-                <span
-                  className={`block text-[11px] tracking-wide uppercase ${
-                    isCurrent ? "text-neutral-300 dark:text-neutral-600" : "text-neutral-400 dark:text-neutral-500"
-                  }`}
-                >
-                  {isCurrent ? "Now reading" : isRead ? "Read" : "Pending"}
-                </span>
-              </span>
-            </button>
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingId(entry.id)}
+                className={`shrink-0 rounded p-1 ${isCurrent ? "hover:bg-white/10" : "hover:bg-muted"}`}
+                aria-label="Correct this reference"
+              >
+                <Pencil size={14} />
+              </button>
+            </div>
           );
         })}
-      </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-    </section>
+        {error && <p className="text-destructive text-xs">{error}</p>}
+      </CardContent>
+    </Card>
   );
 }
 

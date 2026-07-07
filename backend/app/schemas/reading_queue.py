@@ -1,6 +1,12 @@
 from pydantic import BaseModel, ConfigDict
 
 
+class ReadingQueueEntryEdit(BaseModel):
+    book: str
+    chapter: int
+    verse: int
+
+
 class ReadingQueueEntryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

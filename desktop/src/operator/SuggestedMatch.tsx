@@ -1,48 +1,24 @@
 import { useEffect } from "react";
 import { Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { useMatchStore } from "@/store/match-store";
+import type { MatchSuggestion } from "@/lib/ws-messages";
 
-export type SuggestionMessage = {
-  type: "suggestion";
-  kind: "verse" | "song";
-  text: string;
-  match_type: "regex" | "embedding";
-  confidence: number;
-  book?: string;
-  chapter?: number;
-  verse?: number;
-  translation?: string;
-  song_id?: number;
-  line_number?: number;
-};
-
-export function isSuggestionMessage(message: unknown): message is SuggestionMessage {
-  if (typeof message !== "object" || message === null) return false;
-  const candidate = message as Record<string, unknown>;
-  return candidate.type === "suggestion" && typeof candidate.text === "string";
-}
-
-export function isNoMatchMessage(message: unknown): boolean {
-  if (typeof message !== "object" || message === null) return false;
-  return (message as Record<string, unknown>).type === "no_match";
-}
-
-function referenceLabel(s: SuggestionMessage): string {
+function referenceLabel(s: MatchSuggestion): string {
   return s.kind === "verse" ? `${s.book} ${s.chapter}:${s.verse}` : `Song #${s.song_id}, line ${s.line_number}`;
 }
 
-// `suggestion` is owned by OperatorConsole (see its `lastMessage` effect)
-// rather than local state here, so switching to Library and back doesn't
-// drop a suggestion still awaiting a decision -- it's genuinely part of
-// "what's happening right now in this service," not per-page UI state.
-function SuggestedMatch({
-  suggestion,
-  onConfirm,
-  onDismiss,
-}: {
-  suggestion: SuggestionMessage | null;
-  onConfirm: (s: SuggestionMessage) => void;
-  onDismiss: () => void;
-}) {
+// Reads the matching track's suggestion straight from the zustand match
+// store -- no props needed, so the Bible and Songs pages can each drop in
+// <SuggestedMatch variant="verse" /> / <SuggestedMatch variant="song" />
+// without threading state or callbacks down through the page component.
+function SuggestedMatch({ variant }: { variant: "verse" | "song" }) {
+  const suggestion = useMatchStore((s) => (variant === "verse" ? s.verseSuggestion : s.songSuggestion));
+  const confirm = useMatchStore((s) => s.confirm);
+  const dismiss = useMatchStore((s) => (variant === "verse" ? s.clearVerseSuggestion : s.clearSongSuggestion));
+
   useEffect(() => {
     if (!suggestion) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -50,82 +26,64 @@ function SuggestedMatch({
       if (target instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
       if (e.code === "Space") {
         e.preventDefault();
-        onConfirm(suggestion as SuggestionMessage);
+        confirm(suggestion as MatchSuggestion);
       } else if (e.code === "Escape") {
-        onDismiss();
+        dismiss();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [suggestion, onConfirm, onDismiss]);
+  }, [suggestion, confirm, dismiss]);
 
   if (suggestion === null) {
     return null;
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-6 py-4 dark:border-neutral-800">
+    <Card className="overflow-hidden py-0">
+      <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 border-b py-4">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white">
+          <span className="bg-primary text-primary-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
             <Sparkles size={18} />
           </span>
           <div>
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Confident Match</p>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            <p className="text-sm font-semibold">Confident Match</p>
+            <p className="text-muted-foreground text-xs">
               {suggestion.match_type === "regex" ? "Direct reference" : "Wording match"} ·{" "}
               {(suggestion.confidence * 100).toFixed(1)}% confidence
             </p>
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          {suggestion.kind === "verse" && suggestion.book && (
-            <span className="rounded-full bg-neutral-900 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-white dark:bg-neutral-100 dark:text-neutral-900">
-              {suggestion.book}
-            </span>
-          )}
-          {suggestion.translation && (
-            <span className="rounded-full border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
-              {suggestion.translation}
-            </span>
-          )}
+          {suggestion.kind === "verse" && suggestion.book && <Badge variant="secondary">{suggestion.book}</Badge>}
+          {suggestion.translation && <Badge variant="outline">{suggestion.translation}</Badge>}
         </div>
-      </div>
+      </CardHeader>
 
-      <div className="px-6 py-5">
-        <p className="text-2xl font-bold text-neutral-900 dark:text-neutral-100">{referenceLabel(suggestion)}</p>
-        <blockquote className="mt-3 border-l-2 border-orange-400 pl-4 text-base text-neutral-700 dark:text-neutral-300">
+      <CardContent className="py-5">
+        <p className="text-2xl font-bold">{referenceLabel(suggestion)}</p>
+        <blockquote className="border-primary/50 text-foreground/80 mt-3 border-l-2 pl-4 text-base">
           &ldquo;{suggestion.text}&rdquo;
         </blockquote>
-      </div>
+      </CardContent>
 
-      <div className="flex items-center gap-3 border-t border-neutral-100 px-6 py-4 dark:border-neutral-800">
-        <button
-          type="button"
-          onClick={() => onConfirm(suggestion)}
-          className="flex-1 rounded-xl bg-neutral-900 py-3 text-sm font-semibold text-white transition-colors hover:bg-neutral-700 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-        >
-          Confirm &amp; Display
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="rounded-xl border border-neutral-300 px-5 py-3 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-        >
-          Dismiss
-        </button>
-      </div>
-      <div className="flex items-center gap-2 border-t border-neutral-100 px-6 py-2 dark:border-neutral-800">
-        <kbd className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          SPACE
-        </kbd>
-        <span className="text-[10px] text-neutral-400">Confirm</span>
-        <kbd className="ml-3 rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          ESC
-        </kbd>
-        <span className="text-[10px] text-neutral-400">Dismiss</span>
-      </div>
-    </section>
+      <CardFooter className="flex flex-col gap-0 border-t p-0!">
+        <div className="flex w-full items-center gap-3 p-4">
+          <Button className="flex-1" size="lg" onClick={() => confirm(suggestion)}>
+            Confirm &amp; Display
+          </Button>
+          <Button variant="outline" size="lg" onClick={dismiss}>
+            Dismiss
+          </Button>
+        </div>
+        <div className="flex w-full items-center gap-2 border-t px-4 py-2">
+          <kbd className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-mono text-[10px]">SPACE</kbd>
+          <span className="text-muted-foreground text-[10px]">Confirm</span>
+          <kbd className="bg-muted text-muted-foreground ml-3 rounded px-1.5 py-0.5 font-mono text-[10px]">ESC</kbd>
+          <span className="text-muted-foreground text-[10px]">Dismiss</span>
+        </div>
+      </CardFooter>
+    </Card>
   );
 }
 

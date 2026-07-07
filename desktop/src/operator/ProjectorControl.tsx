@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { Maximize, Minimize, MonitorOff, MonitorPlay } from "lucide-react";
+import { Ban, Maximize, Minimize, MonitorOff, MonitorPlay } from "lucide-react";
+import { toast } from "sonner";
 import { hideDisplay, isDisplayVisible, setDisplayFullscreen, showDisplay } from "../lib/display-window";
+import { useSocketStore } from "@/store/socket-store";
 
 // The projector output is its own hidden-by-default OS window (see
 // tauri.conf.json + desktop/src/display/DisplayWindow.tsx) -- there was
@@ -9,6 +11,7 @@ import { hideDisplay, isDisplayVisible, setDisplayFullscreen, showDisplay } from
 // the one control an operator needs before anything else will be visible to
 // the congregation.
 function ProjectorControl() {
+  const send = useSocketStore((s) => s.send);
   const [visible, setVisible] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -72,6 +75,16 @@ function ProjectorControl() {
           {fullscreen ? "Exit Fullscreen" : "Fullscreen"}
         </button>
       )}
+      <button
+        type="button"
+        onClick={() => {
+          send({ action: "blackout" });
+          toast("Projector blacked out");
+        }}
+        className="flex items-center gap-2 rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/15"
+      >
+        <Ban size={14} /> Blackout
+      </button>
     </div>
   );
 }

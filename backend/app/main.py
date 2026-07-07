@@ -7,12 +7,14 @@ from sqlalchemy import func, select
 
 from app.config import settings
 from app.data.reading_queue import sync_current_to_reference
+from app.data.song_queue import sync_song_queue_to_reference
 from app.data.verses import SUPPORTED_TRANSLATIONS, load_all_translations
 from app.database import AsyncSessionLocal, engine
 from app.matching import display_state
 from app.models import Base, Verse
 from app.routes import api_router
 from app.schemas.reading_queue import ReadingQueueOut
+from app.schemas.song_queue import SongQueueOut
 from app.ws import manager
 
 
@@ -80,6 +82,23 @@ async def websocket_endpoint(websocket: WebSocket):
                         await manager.send_to_all(
                             {"type": "reading_queue", **ReadingQueueOut.model_validate(queue).model_dump()}
                         )
+                elif data.get("kind") == "song" and all(k in data for k in ("song_id", "line_number")):
+                    # Song-queue equivalent of the above -- confirming a
+                    # song line manually (a queue entry clicked, a song
+                    # suggestion, a manual search result) moves the song
+                    # queue's "now playing" pointer too.
+                    async with AsyncSessionLocal() as db:
+                        song_queue = await sync_song_queue_to_reference(db, data["song_id"], data["line_number"])
+                    if song_queue is not None:
+                        await manager.send_to_all(
+                            {"type": "song_queue", **SongQueueOut.model_validate(song_queue).model_dump()}
+                        )
+                await manager.send_to_all(data)
+            elif data.get("action") == "blackout":
+                # Clears the projector to black without needing a confirm
+                # payload -- also clears "currently displayed" tracking on
+                # both tracks, since nothing is displayed anymore.
+                display_state.clear()
                 await manager.send_to_all(data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)

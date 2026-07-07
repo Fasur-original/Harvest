@@ -1,5 +1,20 @@
 import { useState, type DragEvent } from "react";
-import { AlertTriangle, CheckCircle2, Download, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, ListPlus, UploadCloud } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useQueueStore } from "@/store/queue-store";
 
 const API_BASE = "http://localhost:8000";
 
@@ -17,45 +32,60 @@ const exampleRows: [string, string][] = [
 
 function FormatGuide() {
   return (
-    <details className="group rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:bg-neutral-800/50 dark:text-neutral-300">
-      <summary className="cursor-pointer font-medium text-neutral-700 select-none dark:text-neutral-200">
+    <details className="bg-muted/50 rounded-lg px-3 py-2 text-xs">
+      <summary className="text-foreground cursor-pointer font-medium select-none">
         Format guide — one tab per song
       </summary>
       <div className="mt-2 flex flex-col gap-2">
-        <p>
-          Each tab needs a header row, then one lyric line per row. The tab name becomes the song title.
-        </p>
+        <p>Each tab needs a header row, then one lyric line per row. The tab name becomes the song title.</p>
         <div className="overflow-x-auto">
-          <table className="border-collapse overflow-hidden rounded-lg border border-neutral-300 dark:border-neutral-700">
+          <table className="border-border overflow-hidden rounded-lg border">
             <thead>
-              <tr className="bg-neutral-200 dark:bg-neutral-700">
-                <th className="border border-neutral-300 px-2 py-1 text-left font-semibold dark:border-neutral-600">
-                  line_text
-                </th>
-                <th className="border border-neutral-300 px-2 py-1 text-left font-semibold dark:border-neutral-600">
-                  repeat_count
-                </th>
+              <tr className="bg-muted">
+                <th className="border-border border px-2 py-1 text-left font-semibold">line_text</th>
+                <th className="border-border border px-2 py-1 text-left font-semibold">repeat_count</th>
               </tr>
             </thead>
             <tbody>
               {exampleRows.map(([text, repeat], i) => (
-                <tr key={i} className="bg-white dark:bg-neutral-800">
-                  <td className="border border-neutral-300 px-2 py-1 dark:border-neutral-700">{text}</td>
-                  <td className="border border-neutral-300 px-2 py-1 text-neutral-400 dark:border-neutral-700">
-                    {repeat || "(blank)"}
-                  </td>
+                <tr key={i} className="bg-background">
+                  <td className="border-border border px-2 py-1">{text}</td>
+                  <td className="border-border text-muted-foreground border px-2 py-1">{repeat || "(blank)"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <p>
-          <span className="font-semibold">line_text</span> is required.{" "}
-          <span className="font-semibold">repeat_count</span> is optional — blank defaults to 1; only fill it in for
-          a line sung more than once.
+          <span className="text-foreground font-semibold">line_text</span> is required.{" "}
+          <span className="text-foreground font-semibold">repeat_count</span> is optional — blank defaults to 1; only
+          fill it in for a line sung more than once.
         </p>
       </div>
     </details>
+  );
+}
+
+function AddToQueueCell({ songId }: { songId: number }) {
+  const addSongToQueue = useQueueStore((s) => s.addSongToQueue);
+  const [status, setStatus] = useState<"idle" | "added" | "error">("idle");
+
+  async function handleClick() {
+    const error = await addSongToQueue(songId);
+    if (error) {
+      setStatus("error");
+      toast.error(error);
+    } else {
+      setStatus("added");
+      toast.success("Added to song queue");
+    }
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={handleClick} disabled={status === "added"} className="gap-1.5">
+      <ListPlus size={12} />
+      {status === "added" ? "Added" : status === "error" ? "Retry" : "Add to Queue"}
+    </Button>
   );
 }
 
@@ -76,9 +106,17 @@ function UploadSongSheet() {
       const res = await fetch(`${API_BASE}/songs/upload`, { method: "POST", body: formData });
       if (!res.ok) {
         setError(`Error ${res.status}`);
+        toast.error(`Upload failed (${res.status})`);
         return;
       }
-      setResult(await res.json());
+      const data: ImportResult = await res.json();
+      setResult(data);
+      if (data.imported.length > 0) {
+        toast.success(`Imported ${data.imported.length} song${data.imported.length === 1 ? "" : "s"}`);
+      }
+      if (data.errors.length > 0) {
+        toast.warning(`${data.errors.length} tab${data.errors.length === 1 ? "" : "s"} had errors`);
+      }
     } finally {
       setPending(false);
     }
@@ -92,114 +130,115 @@ function UploadSongSheet() {
   }
 
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900">
-      <div>
-        <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100">Bulk Upload</h2>
-        <p className="text-sm text-neutral-500 dark:text-neutral-400">
-          Upload a song sheet workbook to sync the library.
-        </p>
-      </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Bulk Upload</CardTitle>
+        <p className="text-muted-foreground text-sm">Upload a song sheet workbook to sync the library.</p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <FormatGuide />
 
-      <FormatGuide />
-
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
-          dragging
-            ? "border-orange-400 bg-orange-50 dark:bg-orange-500/5"
-            : "border-neutral-300 dark:border-neutral-700"
-        }`}
-      >
-        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          <UploadCloud size={22} />
-        </span>
-        <div>
-          <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Drop your spreadsheet here</p>
-          <p className="text-xs text-neutral-500 dark:text-neutral-400">Supports .xlsx</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="cursor-pointer rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600">
-            Browse Files
-            <input
-              type="file"
-              accept=".xlsx"
-              className="hidden"
-              onChange={(e) => {
-                const picked = e.target.files?.[0];
-                if (picked) upload(picked);
-                e.target.value = "";
-              }}
-            />
-          </label>
-          <a
-            href={`${API_BASE}/songs/template`}
-            className="flex items-center gap-1.5 rounded-lg border border-neutral-300 px-4 py-2 text-sm font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
-            <Download size={14} /> Download Template
-          </a>
-        </div>
-      </div>
-
-      {pending && <p className="text-sm text-neutral-500 dark:text-neutral-400">Uploading…</p>}
-      {error && <p className="text-sm text-red-500">{error}</p>}
-
-      {result && (result.imported.length > 0 || result.errors.length > 0) && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-xs">
-            {result.imported.length > 0 && (
-              <span className="flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 font-semibold text-green-700 dark:bg-green-500/10 dark:text-green-400">
-                <CheckCircle2 size={12} /> {result.imported.length} Ready
-              </span>
-            )}
-            {result.errors.length > 0 && (
-              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-                <AlertTriangle size={12} /> {result.errors.length} Error{result.errors.length === 1 ? "" : "s"}
-              </span>
-            )}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
+            dragging ? "border-primary bg-primary/5" : "border-border"
+          }`}
+        >
+          <span className="bg-muted text-muted-foreground flex h-12 w-12 items-center justify-center rounded-full">
+            <UploadCloud size={22} />
+          </span>
+          <div>
+            <p className="text-sm font-semibold">Drop your spreadsheet here</p>
+            <p className="text-muted-foreground text-xs">Supports .xlsx</p>
           </div>
-          <div className="overflow-hidden rounded-xl border border-neutral-200 dark:border-neutral-800">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-neutral-50 text-xs tracking-wide text-neutral-500 uppercase dark:bg-neutral-800/50 dark:text-neutral-400">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Song</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-                {result.imported.map((s) => (
-                  <tr key={s.id}>
-                    <td className="px-4 py-2.5 font-medium text-neutral-900 dark:text-neutral-100">{s.title}</td>
-                    <td className="px-4 py-2.5">
-                      <span className="flex w-fit items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-500/10 dark:text-green-400">
-                        <CheckCircle2 size={12} /> Ready
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {result.errors.map((e, i) => (
-                  <tr key={`err-${i}`}>
-                    <td className="px-4 py-2.5 font-medium text-neutral-900 dark:text-neutral-100">{e.tab}</td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className="flex w-fit items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                        title={e.problem}
-                      >
-                        <AlertTriangle size={12} /> {e.problem}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex items-center gap-2">
+            <label className={cn(buttonVariants({ size: "lg" }), "cursor-pointer")}>
+              Browse Files
+              <input
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                onChange={(e) => {
+                  const picked = e.target.files?.[0];
+                  if (picked) upload(picked);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <a
+              href={`${API_BASE}/songs/template`}
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }), "gap-1.5")}
+            >
+              <Download size={14} /> Download Template
+            </a>
           </div>
         </div>
-      )}
-    </section>
+
+        {pending && <Skeleton className="h-24 w-full" />}
+        {!pending && error && <p className="text-destructive text-sm">{error}</p>}
+
+        {!pending && result && (result.imported.length > 0 || result.errors.length > 0) && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              {result.imported.length > 0 && (
+                <Badge className="gap-1 bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400">
+                  <CheckCircle2 size={12} /> {result.imported.length} Ready
+                </Badge>
+              )}
+              {result.errors.length > 0 && (
+                <Badge className="gap-1 bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                  <AlertTriangle size={12} /> {result.errors.length} Error{result.errors.length === 1 ? "" : "s"}
+                </Badge>
+              )}
+            </div>
+            <div className="overflow-hidden rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Song</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {result.imported.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell className="font-medium">{s.title}</TableCell>
+                      <TableCell>
+                        <Badge className="gap-1 bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400">
+                          <CheckCircle2 size={12} /> Ready
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <AddToQueueCell songId={s.id} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {result.errors.map((e, i) => (
+                    <TableRow key={`err-${i}`}>
+                      <TableCell className="font-medium">{e.tab}</TableCell>
+                      <TableCell colSpan={2}>
+                        <Badge
+                          className="gap-1 bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                          title={e.problem}
+                        >
+                          <AlertTriangle size={12} /> {e.problem}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
