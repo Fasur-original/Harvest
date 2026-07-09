@@ -14,6 +14,7 @@ const API_BASE = "http://localhost:8000";
 function QuickAddSong() {
   const addSongToQueue = useQueueStore((s) => s.addSongToQueue);
   const [title, setTitle] = useState("");
+  const [artist, setArtist] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [pending, setPending] = useState(false);
   const [addedSong, setAddedSong] = useState<{ id: number; title: string } | null>(null);
@@ -36,6 +37,7 @@ function QuickAddSong() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
+          artist: artist.trim() || null,
           lines: lines.map((line_text, i) => ({ line_number: i + 1, line_text, repeat_count: 1 })),
         }),
       });
@@ -47,6 +49,7 @@ function QuickAddSong() {
       toast.success(`Added "${title.trim()}" (${lines.length} line${lines.length === 1 ? "" : "s"})`);
       setAddedSong({ id: created.id, title: title.trim() });
       setTitle("");
+      setArtist("");
       setLyrics("");
     } finally {
       setPending(false);
@@ -88,7 +91,10 @@ I once was lost, but now am found
 Was blind, but now I see`}
           </pre>
         </details>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song title..." />
+        <div className="flex gap-2">
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song title..." />
+          <Input value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist (optional)..." />
+        </div>
         <textarea
           value={lyrics}
           onChange={(e) => setLyrics(e.target.value)}

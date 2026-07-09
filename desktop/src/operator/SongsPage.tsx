@@ -11,9 +11,9 @@ import { useQueueStore } from "@/store/queue-store";
 import LiveTranscript from "./LiveTranscript";
 import MatchOptions from "./MatchOptions";
 import PageHeader from "./PageHeader";
+import PendingMatches from "./PendingMatches";
 import QuickAddSong from "./QuickAddSong";
 import SongQueue from "./SongQueue";
-import SuggestedMatch from "./SuggestedMatch";
 import UploadSongSheet from "./UploadSongSheet";
 
 const API_BASE = "http://localhost:8000";
@@ -125,7 +125,7 @@ function SongsPage() {
         <SongQueue />
         <div className="flex flex-col gap-6">
           <LiveTranscript />
-          <SuggestedMatch variant="song" />
+          <PendingMatches variant="song" />
           <MatchOptions variant="song" />
           <UploadSongSheet />
           <QuickAddSong />

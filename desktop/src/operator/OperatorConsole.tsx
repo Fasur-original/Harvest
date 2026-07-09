@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import BiblePage from "./BiblePage";
+import LivePreview from "./LivePreview";
 import Sidebar from "./Sidebar";
 import SettingsPage from "./SettingsPage";
 import SongsPage from "./SongsPage";
@@ -23,7 +24,8 @@ function OperatorConsole() {
           </Routes>
         </div>
       </main>
-      <Toaster position="bottom-right" />
+      <LivePreview />
+      <Toaster position="top-right" />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-use tauri::{Manager, PhysicalPosition};
+use tauri::{Manager, PhysicalPosition, WindowEvent};
 
 /// Positions the projector window on a monitor different from the operator
 /// console's, full-screen, if a second monitor is connected. On a single-monitor
@@ -36,6 +36,21 @@ pub fn run() {
         .setup(|app| {
             place_display_window(app.handle())?;
             Ok(())
+        })
+        // The projector "display" window is a separate, genuinely open
+        // window (place_display_window always shows it), not just hidden --
+        // Tauri only exits the process once every window is closed, so
+        // without this, closing the operator console leaves the display
+        // window (and the whole process) running invisibly until something
+        // kills it manually. exit(0) tears down every window itself as part
+        // of process shutdown -- closing "display" individually first (an
+        // earlier version of this did) just raced WebView2's own window-class
+        // cleanup against the process exit and surfaced as a benign but noisy
+        // "Failed to unregister class Chrome_WidgetWin_0" error on exit.
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
+                window.app_handle().exit(0);
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

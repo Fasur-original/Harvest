@@ -19,7 +19,7 @@ from typing import Literal
 from sentence_transformers import SentenceTransformer
 
 from app.config import settings
-from app.matching.vector_store import ensure_tables, get_connection, to_blob
+from app.matching.vector_store import ensure_tables, from_blob, get_connection, to_blob
 
 Scope = Literal["verses", "songs"]
 
@@ -54,6 +54,13 @@ class MatchCandidate:
     translation: str | None = None
     song_id: int | None = None
     line_number: int | None = None
+
+
+@dataclass
+class TranslationRanking:
+    translation: str
+    text: str
+    similarity: float  # cosine similarity to the spoken sentence, 1.0 = closest possible
 
 
 def embed_and_store_verses(batch_size: int = 64) -> int:
@@ -212,3 +219,47 @@ def search_by_embedding(
     more than one scope for the same text.
     """
     return search_by_vector(embed_query(text), scope, top_k, song_ids=song_ids)
+
+
+def rank_translations_by_similarity(book: str, chapter: int, verse: int, spoken_text: str) -> list[TranslationRanking]:
+    """"Closest match to what was said" -- for every translation loaded for
+    this exact verse, ranks it by cosine similarity between the preacher's
+    spoken sentence and that translation's own wording for this verse.
+
+    A relevance ranking against what was just said, not a scholarly or
+    theological judgment about translation accuracy -- callers must not
+    present it as the latter.
+
+    Compares against each translation's already-STORED embedding (computed
+    once during the one-time bulk embedding pass -- embed_and_store_verses)
+    rather than re-embedding four short verse texts on every request; only
+    the spoken sentence itself is embedded fresh here. Embeddings are
+    already L2-normalized (normalize_embeddings=True throughout this
+    module), so cosine similarity is just the dot product.
+    """
+    model = _ensure_model()
+    query_vector = model.encode([spoken_text], normalize_embeddings=True)[0].tolist()
+
+    conn = get_connection()
+    try:
+        ensure_tables(conn, model.get_sentence_embedding_dimension())
+        rows = conn.execute(
+            "SELECT id, translation, text FROM verses WHERE book = ? AND chapter = ? AND verse = ?",
+            (book, chapter, verse),
+        ).fetchall()
+
+        rankings: list[TranslationRanking] = []
+        for verse_id, translation, text in rows:
+            embedding_row = conn.execute(
+                "SELECT embedding FROM verse_vectors WHERE rowid = ?", (verse_id,)
+            ).fetchone()
+            if embedding_row is None:
+                continue
+            stored_vector = from_blob(embedding_row[0])
+            similarity = sum(q * s for q, s in zip(query_vector, stored_vector))
+            rankings.append(TranslationRanking(translation=translation, text=text, similarity=similarity))
+
+        rankings.sort(key=lambda r: -r.similarity)
+        return rankings
+    finally:
+        conn.close()

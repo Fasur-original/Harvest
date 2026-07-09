@@ -13,6 +13,7 @@ class SongLineOut(SongLineIn):
 
 class SongCreate(BaseModel):
     title: str
+    artist: str | None = None
     lines: list[SongLineIn]
 
 
@@ -21,6 +22,7 @@ class SongSummary(BaseModel):
 
     id: int
     title: str
+    artist: str | None = None
 
 
 class SongOut(SongSummary):
@@ -32,6 +34,24 @@ class SheetErrorOut(BaseModel):
     problem: str
 
 
-class SongSheetImportResult(BaseModel):
-    imported: list[SongSummary]
+class SongImportRow(BaseModel):
+    """One song parsed out of a bulk-import file, not yet saved -- the
+    operator reviews/fixes these before anything reaches the database (see
+    POST /songs/import/preview + /songs/import/commit)."""
+
+    title: str
+    artist: str | None = None
+    lines: list[SongLineIn]
+
+
+class SongImportPreview(BaseModel):
+    ready: list[SongImportRow]
     errors: list[SheetErrorOut]
+
+
+class SongImportCommitRequest(BaseModel):
+    songs: list[SongImportRow]
+
+
+class SongImportCommitResult(BaseModel):
+    imported: list[SongSummary]

@@ -46,6 +46,14 @@ def is_currently_displayed_verse(book: str, chapter: int, verse: int) -> bool:
     return _current_verse == (book, chapter, verse)
 
 
+def get_current_verse() -> tuple[str, int, int] | None:
+    """The verse a translation-comparison request ("show me the strongest
+    rendering of THIS") resolves against when the request doesn't name a
+    reference of its own -- "this" means whatever's actually on screen.
+    """
+    return _current_verse
+
+
 def is_currently_displayed_song(song_id: int, line_number: int) -> bool:
     return _current_song == (song_id, line_number)
 

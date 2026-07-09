@@ -15,10 +15,13 @@ function describeCandidate(c: Candidate): string {
 // Shown when the preacher paraphrases or can't quite recall the book,
 // verse, or exact wording -- confident enough that *something* relevant was
 // said to be worth surfacing, not confident enough in any one reading to
-// auto-suggest it the way SuggestedMatch does. Reads straight from the
-// zustand match store, same pattern as SuggestedMatch.
+// auto-suggest it the way PendingMatches does. These are mutually exclusive
+// readings of one utterance ("pick the right one"), not independent items,
+// so unlike PendingMatches this stays a single replaced list rather than a
+// queue. Reads straight from the zustand match store.
 function MatchOptions({ variant }: { variant: "verse" | "song" }) {
   const candidates = useMatchStore((s) => (variant === "verse" ? s.verseCandidates : s.songCandidates));
+  const sourceText = useMatchStore((s) => (variant === "verse" ? s.verseCandidatesSourceText : s.songCandidatesSourceText));
   const confirm = useMatchStore((s) => s.confirm);
   const dismiss = useMatchStore((s) => (variant === "verse" ? s.clearVerseCandidates : s.clearSongCandidates));
 
@@ -31,6 +34,11 @@ function MatchOptions({ variant }: { variant: "verse" | "song" }) {
       <div>
         <h2 className="text-sm font-semibold">Ranked Match Results</h2>
         <p className="text-muted-foreground text-xs">Not confident enough for one guess — pick the right one.</p>
+        {sourceText && (
+          <p className="text-muted-foreground mt-1 text-xs">
+            Heard: <span className="italic">&ldquo;{sourceText}&rdquo;</span>
+          </p>
+        )}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {candidates.map((c, i) => (

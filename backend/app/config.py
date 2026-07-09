@@ -43,10 +43,18 @@ class Settings(BaseSettings):
     WHISPER_LANGUAGE: str = "en"
     # Speech-boundary-aware chunking (VAD), not a fixed clock: buffer at least
     # MIN seconds, then transcribe as soon as a real pause (SILENCE_MS) is
-    # detected, or once MAX seconds is hit regardless (bounds worst-case
-    # latency for a long run-on sentence with no pause).
+    # detected, or once MAX seconds is hit regardless. Pause-based cutting
+    # itself is unaffected by MAX -- a normal spoken sentence with a real
+    # pause still cuts there, at whatever length. MAX only governs the
+    # forced-cutoff case where no pause is found at all, which in practice is
+    # mostly continuous singing (lyrics run into each other with little
+    # silence) rather than ordinary speech. Lowered from 8.0 specifically so
+    # sung lines reach the LLM cleanup step's rolling window sooner (spec:
+    # every 3-4s during singing) -- the real tradeoff is that an unusually
+    # long, genuinely pause-free spoken sentence now also gets force-cut
+    # sooner and split across more chunks than before.
     TRANSCRIPT_MIN_CHUNK_SECONDS: float = 1.0
-    TRANSCRIPT_MAX_CHUNK_SECONDS: float = 8.0
+    TRANSCRIPT_MAX_CHUNK_SECONDS: float = 3.5
     TRANSCRIPT_SILENCE_MS: int = 500
     # faster-whisper's own default is 5 -- beam search explores 5 candidate
     # decodings per step and keeps the best, instead of greedily taking the
@@ -91,6 +99,36 @@ class Settings(BaseSettings):
     # include the right one without the list itself becoming noise the
     # operator has to read through mid-service.
     MATCH_CANDIDATE_COUNT: int = 3
+
+    # LLM cleanup step: a small local Ollama model classifies/cleans a
+    # transcript chunk into a batch of verse/song items before regex's
+    # single-reference fast path would otherwise fall through straight to
+    # embeddings. Deliberately a small (1B) model, quantized -- this runs on
+    # the same modest hardware budget as the rest of the pipeline (§8), and
+    # its output is never trusted on its own regardless of size (see
+    # app/matching/verse_bounds.py's deterministic validation) so a bigger
+    # model buys accuracy, not safety.
+    LLM_CLEANUP_ENABLED: bool = True
+    LLM_CLEANUP_MODEL: str = "llama3.2:1b"
+    LLM_CLEANUP_HOST: str = "http://localhost:11434"
+    # Ollama's own default keep_alive (5m) unloads the model from RAM after
+    # any gap in requests -- normal during a live service (prayer, worship,
+    # silence between points). The next call then pays a full model-reload
+    # cost on top of inference, which blows straight through the 900ms
+    # ceiling below and surfaces as a spurious timeout. Told to stay resident
+    # for the length of a service instead, so only the very first call after
+    # startup risks paying that reload cost.
+    LLM_CLEANUP_KEEP_ALIVE: str = "60m"
+    # Hard ceiling on one call -- on timeout, skip it and fall through to
+    # search_by_embedding on the raw chunk rather than block the live loop.
+    LLM_CLEANUP_TIMEOUT_MS: int = 900
+    LLM_CLEANUP_NUM_PREDICT: int = 200
+    LLM_CLEANUP_NUM_CTX: int = 768
+    LLM_CLEANUP_MAX_ITEMS: int = 5
+    # Below this much free system RAM, the step disables itself automatically
+    # at startup rather than risk starving the rest of the pipeline (STT +
+    # embeddings already run on the same machine).
+    LLM_CLEANUP_MIN_FREE_RAM_MB: int = 4096
 
     class Config:
         env_file = ".env"

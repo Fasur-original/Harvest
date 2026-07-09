@@ -51,14 +51,18 @@ function ProjectorControl() {
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-neutral-900 px-3 py-2.5">
-      <p className="text-[11px] font-medium tracking-widest text-neutral-500 uppercase">Projector</p>
+    <div className="bg-sidebar-accent flex flex-col gap-2 rounded-lg px-3 py-2.5">
+      <p className="text-sidebar-accent-foreground/50 text-[11px] font-medium tracking-widest uppercase">
+        Projector
+      </p>
       <button
         type="button"
         onClick={toggleVisible}
         disabled={pending}
         className={`flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-          visible ? "bg-green-500/15 text-green-400" : "bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+          visible
+            ? "bg-green-500/15 text-green-600 dark:text-green-400"
+            : "bg-sidebar-accent-foreground/10 text-sidebar-accent-foreground hover:bg-sidebar-accent-foreground/15"
         }`}
       >
         {visible ? <MonitorPlay size={14} /> : <MonitorOff size={14} />}
@@ -69,7 +73,7 @@ function ProjectorControl() {
           type="button"
           onClick={toggleFullscreen}
           disabled={pending}
-          className="flex items-center gap-2 rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-neutral-300 transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="bg-sidebar-accent-foreground/10 text-sidebar-accent-foreground hover:bg-sidebar-accent-foreground/15 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60"
         >
           {fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
           {fullscreen ? "Exit Fullscreen" : "Fullscreen"}
@@ -81,7 +85,7 @@ function ProjectorControl() {
           send({ action: "blackout" });
           toast("Projector blacked out");
         }}
-        className="flex items-center gap-2 rounded-md bg-neutral-800 px-2.5 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/15"
+        className="bg-sidebar-accent-foreground/10 flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/15 dark:text-red-300"
       >
         <Ban size={14} /> Blackout
       </button>

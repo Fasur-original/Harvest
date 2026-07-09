@@ -19,6 +19,14 @@ async def get_active_song_queue(db: AsyncSession) -> SongQueue | None:
         select(SongQueue)
         .where(SongQueue.cleared_at.is_(None))
         .options(selectinload(SongQueue.entries).selectinload(SongQueueEntry.song))
+        # add_to_song_queue and sync_song_queue_to_reference both call this a
+        # second time, on the same session, right after writing a new entry --
+        # without populate_existing, SQLAlchemy's identity map returns the
+        # SongQueue object already cached from the first call in that same
+        # request, with its `.entries` collection still the pre-write
+        # snapshot. That silently sent the operator a queue response missing
+        # the song they'd just added.
+        .execution_options(populate_existing=True)
     )
     return result.scalar_one_or_none()
 
@@ -54,11 +62,33 @@ async def remove_song_queue_entry(db: AsyncSession, entry_id: int) -> None:
     entry = await db.get(SongQueueEntry, entry_id)
     if entry is None:
         return
-    queue = await db.get(SongQueue, entry.song_queue_id)
+    queue_id = entry.song_queue_id
+    queue = await db.get(SongQueue, queue_id)
     await db.delete(entry)
     if queue is not None and queue.current_entry_id == entry_id:
         queue.current_entry_id = None
         queue.current_line_number = None
+    await db.flush()
+
+    # add_to_song_queue picks the next entry's position as len(entries) --
+    # without renumbering here, removing anything but the last entry leaves
+    # a gap, and the next add collides with an existing entry's position
+    # (order_by=SongQueueEntry.position has no tiebreaker for that case, so
+    # display order becomes unpredictable). Keep positions contiguous 0..n-1.
+    remaining = (
+        (
+            await db.execute(
+                select(SongQueueEntry)
+                .where(SongQueueEntry.song_queue_id == queue_id)
+                .order_by(SongQueueEntry.position)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for i, remaining_entry in enumerate(remaining):
+        remaining_entry.position = i
+
     await db.commit()
 
 

@@ -75,13 +75,17 @@
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --radius: 0.625rem;
-    --sidebar: oklch(0.145 0 0);
-    --sidebar-foreground: oklch(0.87 0 0);
+    /* shadcn's scaffold default set these identically to the .dark block
+       below (a permanently-black sidebar regardless of theme) -- given a
+       real light value here instead, so toggling to light mode actually
+       lightens the sidebar along with everything else. */
+    --sidebar: oklch(0.97 0 0);
+    --sidebar-foreground: oklch(0.205 0 0);
     --sidebar-primary: oklch(0.705 0.213 47.6);
     --sidebar-primary-foreground: oklch(0.98 0.016 73.68);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-accent: oklch(0.93 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.705 0.213 47.6);
 }
 

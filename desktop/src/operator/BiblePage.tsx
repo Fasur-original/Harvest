@@ -10,8 +10,9 @@ import { useMatchStore } from "@/store/match-store";
 import LiveTranscript from "./LiveTranscript";
 import MatchOptions from "./MatchOptions";
 import PageHeader from "./PageHeader";
+import PendingMatches from "./PendingMatches";
 import ReadingQueue from "./ReadingQueue";
-import SuggestedMatch from "./SuggestedMatch";
+import TranslationComparison from "./TranslationComparison";
 
 const API_BASE = "http://localhost:8000";
 
@@ -115,7 +116,8 @@ function BiblePage() {
         <ReadingQueue />
         <div className="flex flex-col gap-6">
           <LiveTranscript />
-          <SuggestedMatch variant="verse" />
+          <TranslationComparison />
+          <PendingMatches variant="verse" />
           <MatchOptions variant="verse" />
           <VerseSearch />
         </div>

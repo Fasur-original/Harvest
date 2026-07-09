@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 import { Switch } from "@/components/ui/switch";
 import { useSocketStore } from "@/store/socket-store";
 import { useThemeStore } from "@/store/theme-store";
+import AiCleanupIndicator from "./AiCleanupIndicator";
 import ProjectorControl from "./ProjectorControl";
 
 const NAV_ITEMS: { to: string; label: string; icon: LucideIcon }[] = [
@@ -20,8 +21,10 @@ function Sidebar() {
     <aside className="bg-sidebar text-sidebar-foreground flex w-56 shrink-0 flex-col justify-between px-4 py-6">
       <div className="flex flex-col gap-8">
         <div className="px-2">
-          <p className="text-lg font-semibold tracking-tight text-white">Harvest</p>
-          <p className="text-[11px] font-medium tracking-widest text-neutral-500 uppercase">Operator Console</p>
+          <p className="text-sidebar-foreground text-lg font-semibold tracking-tight">Harvest</p>
+          <p className="text-sidebar-foreground/50 text-[11px] font-medium tracking-widest uppercase">
+            Operator Console
+          </p>
         </div>
         <nav className="flex flex-col gap-1">
           {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
@@ -32,7 +35,7 @@ function Sidebar() {
                 `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-primary/15 text-primary"
-                    : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-100"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 }`
               }
             >
@@ -44,16 +47,21 @@ function Sidebar() {
       </div>
       <div className="flex flex-col gap-3">
         <ProjectorControl />
-        <div className="flex items-center justify-between gap-2 rounded-lg bg-neutral-900 px-3 py-2.5 text-xs">
-          <span className="flex items-center gap-2 text-neutral-300">
+        <AiCleanupIndicator />
+        <div className="bg-sidebar-accent flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-xs">
+          <span className="text-sidebar-accent-foreground flex items-center gap-2">
             {theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}
             {theme === "dark" ? "Dark" : "Light"}
           </span>
           <Switch checked={theme === "dark"} onCheckedChange={toggleTheme} size="sm" />
         </div>
-        <div className="flex items-center gap-2 rounded-lg bg-neutral-900 px-3 py-2.5 text-xs">
+        <div className="bg-sidebar-accent flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs">
           {connected ? <Wifi size={15} className="text-green-400" /> : <WifiOff size={15} className="text-red-400" />}
-          <span className={connected ? "text-neutral-300" : "text-neutral-500"}>
+          <span
+            className={
+              connected ? "text-sidebar-accent-foreground" : "text-sidebar-accent-foreground/50"
+            }
+          >
             {connected ? "Connected" : "Disconnected"}
           </span>
         </div>

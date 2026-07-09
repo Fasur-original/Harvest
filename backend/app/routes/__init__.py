@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.routes.bible import router as bible_router
+from app.routes.llm_cleanup import router as llm_cleanup_router
 from app.routes.reading_queue import router as reading_queue_router
 from app.routes.service import router as service_router
 from app.routes.song_queue import router as song_queue_router
@@ -13,4 +14,5 @@ api_router.include_router(songs_router)
 api_router.include_router(service_router)
 api_router.include_router(reading_queue_router)
 api_router.include_router(song_queue_router)
+api_router.include_router(llm_cleanup_router)
 api_router.include_router(transcript_router)

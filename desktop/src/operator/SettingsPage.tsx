@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useLlmCleanupStore } from "@/store/llm-cleanup-store";
 import { useServiceStore } from "@/store/service-store";
 import PageHeader from "./PageHeader";
 
@@ -16,9 +18,14 @@ function SettingsPage() {
   const startService = useServiceStore((s) => s.startService);
   const clearService = useServiceStore((s) => s.clearService);
 
+  const llmStatus = useLlmCleanupStore();
+  const fetchLlmStatus = useLlmCleanupStore((s) => s.fetchStatus);
+  const setLlmEnabled = useLlmCleanupStore((s) => s.setEnabled);
+
   useEffect(() => {
     fetchActiveService();
-  }, [fetchActiveService]);
+    fetchLlmStatus();
+  }, [fetchActiveService, fetchLlmStatus]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -79,6 +86,40 @@ function SettingsPage() {
             )}
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">AI Cleanup</CardTitle>
+          <p className="text-muted-foreground text-sm">
+            When regex alone can't find a direct reference, a small local model classifies the transcript into
+            verse/song matches before falling back to plain wording search. Every verse it finds is still checked
+            against the real Bible data before it's ever shown -- this only affects unclear speech, not accuracy on
+            clear references.
+          </p>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="ai-cleanup-toggle" className="text-sm font-medium">
+              Use AI cleanup for unclear speech
+            </Label>
+            <Switch
+              id="ai-cleanup-toggle"
+              checked={llmStatus.manual_enabled}
+              disabled={!!llmStatus.auto_disabled_reason}
+              onCheckedChange={(checked) => {
+                setLlmEnabled(checked);
+                toast(checked ? "AI cleanup enabled" : "AI cleanup disabled");
+              }}
+            />
+          </div>
+          {llmStatus.auto_disabled_reason && (
+            <p className="text-destructive text-xs">
+              Automatically disabled: {llmStatus.auto_disabled_reason}. Free up memory and restart the app to
+              re-enable.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

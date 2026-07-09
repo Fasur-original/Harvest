@@ -16,7 +16,7 @@ import asyncio
 
 from app.config import settings
 from app.data.service_state import get_active_set
-from app.data.verses import get_verse
+from app.data.verses import SUPPORTED_TRANSLATIONS, get_verse
 from app.database import AsyncSessionLocal
 from app.matching.regex_match import detect_translation, parse_reference_candidates, parse_reference_sequence
 from app.matching.vector_match import MatchCandidate, search_by_vector
@@ -80,22 +80,35 @@ def _dedupe_verses(candidates: list[MatchCandidate]) -> list[MatchCandidate]:
     return list(best_per_verse.values())
 
 
-async def resolve_translation(text: str) -> tuple[str, list[int]]:
+async def resolve_translation(text: str) -> tuple[str, list[int], dict | None]:
     """Shared context both tracks need: the translation an unnamed verse
-    reference should resolve to, and today's uploaded song set (checked
-    before the full library -- PDD §10.5). Computed once per line and passed
-    into both `find_verse_match` and `find_song_match` rather than each
-    re-querying the active service independently.
+    reference should resolve to, today's uploaded song set (checked before
+    the full library -- PDD §10.5), and a note if the preacher named a real,
+    recognized translation that isn't actually loaded for this install.
+
+    Precedence for the resolved translation: an explicitly spoken name in
+    this exact line, then today's service default (set at /service/start),
+    then the install-wide .env default -- never a hardcoded one.
+
+    The third element is `None` unless the spoken translation is a
+    recognized name that isn't in SUPPORTED_TRANSLATIONS -- in that case the
+    church's default is used instead, and the note is
+    `{"requested": "ESV", "used": "KJV"}` so the caller can flag this to the
+    operator rather than the reference silently resolving to a different
+    translation than what was actually asked for, or failing outright.
     """
     async with AsyncSessionLocal() as db:
         active_set = await get_active_set(db)
     todays_song_ids = [song.id for song in active_set.songs] if active_set else []
-    resolved_translation = (
-        detect_translation(text)
-        or (active_set.default_translation if active_set else None)
-        or settings.MATCH_DEFAULT_TRANSLATION
-    )
-    return resolved_translation, todays_song_ids
+    church_default = (active_set.default_translation if active_set else None) or settings.MATCH_DEFAULT_TRANSLATION
+
+    named_translation = detect_translation(text)
+    if named_translation is None:
+        return church_default, todays_song_ids, None
+    if named_translation in SUPPORTED_TRANSLATIONS:
+        return named_translation, todays_song_ids, None
+
+    return church_default, todays_song_ids, {"requested": named_translation, "used": church_default}
 
 
 async def find_verse_match(text: str, query_vector: bytes, resolved_translation: str) -> dict | None:

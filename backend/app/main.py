@@ -1,6 +1,7 @@
 # app/main.py
 from contextlib import asynccontextmanager
 
+import psutil
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -10,7 +11,7 @@ from app.data.reading_queue import sync_current_to_reference
 from app.data.song_queue import sync_song_queue_to_reference
 from app.data.verses import SUPPORTED_TRANSLATIONS, load_all_translations
 from app.database import AsyncSessionLocal, engine
-from app.matching import display_state
+from app.matching import display_state, llm_cleanup_state
 from app.models import Base, Verse
 from app.routes import api_router
 from app.schemas.reading_queue import ReadingQueueOut
@@ -33,12 +34,28 @@ async def lifespan(app: FastAPI):
         if "default_translation" not in columns:
             await conn.exec_driver_sql("ALTER TABLE service_sets ADD COLUMN default_translation VARCHAR(8)")
 
+        result = await conn.exec_driver_sql("PRAGMA table_info(songs)")
+        columns = {row[1] for row in result.fetchall()}
+        if "artist" not in columns:
+            await conn.exec_driver_sql("ALTER TABLE songs ADD COLUMN artist VARCHAR(200)")
+
     # Verse data ships with the app (Phase 02) and is loaded once, locally --
     # never fetched live during a service (PDD §2, §5.5).
     async with AsyncSessionLocal() as db:
         count = await db.scalar(select(func.count()).select_from(Verse))
         if count == 0:
             await load_all_translations(db, SUPPORTED_TRANSLATIONS)
+
+    # The LLM cleanup step runs a local model alongside STT + embeddings on
+    # the same machine -- below a free-RAM floor, disable it automatically
+    # rather than risk starving the rest of the live pipeline. Checked once
+    # at startup, not per-call, since available RAM isn't expected to swing
+    # across a service the way it might across a whole machine's uptime.
+    available_mb = psutil.virtual_memory().available / (1024 * 1024)
+    if available_mb < settings.LLM_CLEANUP_MIN_FREE_RAM_MB:
+        llm_cleanup_state.set_auto_disabled(
+            f"Only {available_mb:.0f}MB free RAM at startup (needs {settings.LLM_CLEANUP_MIN_FREE_RAM_MB}MB)"
+        )
 
     yield
 

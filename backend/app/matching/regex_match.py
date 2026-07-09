@@ -29,6 +29,39 @@ _EXTRA_ALIASES = {
     "revelations": "Revelation",
 }
 
+# Common written abbreviations (the LLM cleanup step -- app/matching/
+# llm_cleanup.py -- is more likely to see these than spoken-out full names,
+# since a small model asked to output a book name will often reach for the
+# short form it's seen most in training data). Not exhaustive, but covers
+# the standard-ish abbreviation for every book, so the same alias map both
+# regex matching and LLM-output validation share (`normalize_book_name`
+# below) stays the one place book-name variants are enumerated.
+_ABBREVIATIONS = {
+    "gen": "Genesis", "gn": "Genesis", "exod": "Exodus", "ex": "Exodus", "lev": "Leviticus",
+    "lv": "Leviticus", "num": "Numbers", "nm": "Numbers", "deut": "Deuteronomy", "dt": "Deuteronomy",
+    "josh": "Joshua", "jos": "Joshua", "judg": "Judges", "jdg": "Judges", "ruth": "Ruth", "ru": "Ruth",
+    "1 sam": "1 Samuel", "2 sam": "2 Samuel", "1 kgs": "1 Kings", "1 ki": "1 Kings",
+    "2 kgs": "2 Kings", "2 ki": "2 Kings", "1 chr": "1 Chronicles", "1 ch": "1 Chronicles",
+    "2 chr": "2 Chronicles", "2 ch": "2 Chronicles", "ezra": "Ezra", "ezr": "Ezra",
+    "neh": "Nehemiah", "esth": "Esther", "est": "Esther", "job": "Job", "ps": "Psalms",
+    "psa": "Psalms", "psalm": "Psalms", "prov": "Proverbs", "pr": "Proverbs",
+    "eccl": "Ecclesiastes", "eccles": "Ecclesiastes", "song": "Song of Solomon", "sos": "Song of Solomon",
+    "isa": "Isaiah", "jer": "Jeremiah", "lam": "Lamentations", "ezek": "Ezekiel", "eze": "Ezekiel",
+    "dan": "Daniel", "hos": "Hosea", "joel": "Joel", "jl": "Joel", "amos": "Amos", "am": "Amos",
+    "obad": "Obadiah", "ob": "Obadiah", "jonah": "Jonah", "jon": "Jonah", "mic": "Micah",
+    "nah": "Nahum", "hab": "Habakkuk", "zeph": "Zephaniah", "zep": "Zephaniah", "hag": "Haggai",
+    "zech": "Zechariah", "zec": "Zechariah", "mal": "Malachi", "matt": "Matthew", "mt": "Matthew",
+    "mark": "Mark", "mk": "Mark", "luke": "Luke", "lk": "Luke", "john": "John", "jn": "John",
+    "acts": "Acts", "ac": "Acts", "rom": "Romans", "rm": "Romans", "1 cor": "1 Corinthians",
+    "2 cor": "2 Corinthians", "gal": "Galatians", "eph": "Ephesians", "phil": "Philippians",
+    "php": "Philippians", "col": "Colossians", "1 thess": "1 Thessalonians", "1 th": "1 Thessalonians",
+    "2 thess": "2 Thessalonians", "2 th": "2 Thessalonians", "1 tim": "1 Timothy",
+    "2 tim": "2 Timothy", "titus": "Titus", "tit": "Titus", "phlm": "Philemon", "phm": "Philemon",
+    "heb": "Hebrews", "james": "James", "jas": "James", "1 pet": "1 Peter", "2 pet": "2 Peter",
+    "1 jn": "1 John", "2 jn": "2 John", "3 jn": "3 John", "jude": "Jude", "jd": "Jude",
+    "rev": "Revelation",
+}
+
 
 def _book_alternatives() -> dict[str, str]:
     """Maps every recognized spoken form of a book name to its canonical form.
@@ -171,6 +204,24 @@ def _fuzzy_match_book(guess: str) -> str | None:
     return ranked[0][0]
 
 
+def normalize_book_name(name: str) -> str | None:
+    """Maps any recognized spoken/written form of a book name -- including
+    common written abbreviations ("Rom", "1 Cor") the LLM cleanup step
+    (app/matching/llm_cleanup.py) is more likely to output than a
+    spelled-out full name -- to its canonical form. Returns `None` if the
+    name isn't recognized at all.
+
+    Deliberately does *not* feed `_ABBREVIATIONS` into the live regex
+    scanning path's book pattern (`_BOOK_PATTERN`) -- some abbreviations
+    here ("song" for Song of Solomon) are also ordinary English words,
+    which is a real false-positive risk when scanning raw transcript text
+    for a reference shape, but not when validating one already-isolated
+    field an LLM was explicitly asked to fill with a book name.
+    """
+    key = name.strip().lower()
+    return _BOOK_ALTERNATIVES.get(key) or _ABBREVIATIONS.get(key)
+
+
 # A spoken translation name alongside a reference (PDD §8: "John 3:16 in the
 # King James"). Requires a lead-in phrase ("in the", "from the", "using the")
 # rather than matching the bare name anywhere in the line -- "WEB" in
@@ -193,6 +244,28 @@ _TRANSLATION_ALIASES = {
     "youngs literal translation": "YLT",
     "web": "WEB",
     "world english bible": "WEB",
+    # Not currently loaded in the verses table (SUPPORTED_TRANSLATIONS in
+    # app/data/verses.py is still just the four public-domain ones above --
+    # copyrighted translations remain out of scope pending licensing, per
+    # Phase 08). Recognized by name anyway, so naming one of these triggers
+    # the documented fallback-to-default-and-flag behavior (see
+    # resolve_translation in pipeline.py) instead of the reference silently
+    # failing to resolve or being misread as something else.
+    "esv": "ESV",
+    "english standard version": "ESV",
+    "niv": "NIV",
+    "new international version": "NIV",
+    "nasb": "NASB",
+    "new american standard": "NASB",
+    "new american standard bible": "NASB",
+    "nlt": "NLT",
+    "new living translation": "NLT",
+    "nkjv": "NKJV",
+    "new king james": "NKJV",
+    "new king james version": "NKJV",
+    "tpt": "TPT",
+    "the passion translation": "TPT",
+    "passion translation": "TPT",
 }
 _TRANSLATION_PATTERN = "|".join(re.escape(form) for form in sorted(_TRANSLATION_ALIASES, key=len, reverse=True))
 _TRANSLATION_RE = re.compile(
@@ -211,6 +284,37 @@ def detect_translation(text: str) -> str | None:
     if match is None:
         return None
     return _TRANSLATION_ALIASES[match.group("translation").lower()]
+
+
+def normalize_translation_name(name: str) -> str | None:
+    """Maps a translation name/abbreviation already isolated as its own
+    field (the LLM cleanup step's structured output) to its canonical code.
+    Unlike `detect_translation`, doesn't require the "in/from/using the"
+    lead-in phrase -- there's no free-text false-positive risk when
+    validating one field a model was explicitly asked to fill with a
+    translation name, same reasoning as `normalize_book_name` vs the live
+    regex scanning path.
+    """
+    return _TRANSLATION_ALIASES.get(name.strip().lower())
+
+
+# A request to compare translations for a verse ("show me the strongest
+# rendering of this," "which version captures this best") -- distinct from
+# a normal reference request, since the right response is a ranked list to
+# pick from, not a single lookup. Deliberately narrow phrasing (translation/
+# rendering/version + strongest/clearest/best/closest, or the "which
+# translation captures..." form) rather than matching on "strongest" or
+# "best" alone, which show up in ordinary sermon speech ("the strongest
+# argument," "his best friend") with nothing to do with comparing translations.
+_TRANSLATION_COMPARISON_RE = re.compile(
+    r"\b(?:strongest|clearest|best|closest)\s+(?:translation|rendering|version)\b"
+    r"|\bwhich\s+(?:translation|version)\s+captures?\s+(?:this|it)\b",
+    re.IGNORECASE,
+)
+
+
+def detect_translation_comparison_request(text: str) -> bool:
+    return bool(_TRANSLATION_COMPARISON_RE.search(text))
 
 
 @dataclass

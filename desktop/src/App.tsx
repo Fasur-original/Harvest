@@ -3,12 +3,26 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { HashRouter } from "react-router-dom";
 import OperatorConsole from "./operator/OperatorConsole";
 import DisplayWindow from "./display/DisplayWindow";
+import { clearPersistedTranscript } from "./store/match-store";
 
 function App() {
   const [label, setLabel] = useState<string | null>(null);
 
   useEffect(() => {
-    setLabel(getCurrentWindow().label);
+    const win = getCurrentWindow();
+    setLabel(win.label);
+
+    // Only the operator window owns the live transcript -- closing it is
+    // the operator ending the service, so this is the one place "app
+    // close" actually means "wipe today's leftover transcript" rather than
+    // the projector display window being hidden/shown mid-service.
+    if (win.label !== "main") return;
+    const unlistenPromise = win.onCloseRequested(() => {
+      clearPersistedTranscript();
+    });
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
   }, []);
 
   if (label === null) {

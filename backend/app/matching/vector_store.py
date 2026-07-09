@@ -47,3 +47,14 @@ def ensure_tables(conn: sqlite3.Connection, dimension: int) -> None:
 
 def to_blob(vector: list[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
+
+
+def from_blob(blob: bytes) -> list[float]:
+    """Decodes a raw embedding blob read directly off a vec0 table (e.g.
+    `SELECT embedding FROM verse_vectors WHERE rowid = ?`), the reverse of
+    `to_blob` -- for reusing an already-stored embedding instead of
+    re-running the model on the same text (see
+    vector_match.rank_translations_by_similarity).
+    """
+    count = len(blob) // 4
+    return list(struct.unpack(f"{count}f", blob))
