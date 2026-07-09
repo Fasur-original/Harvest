@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 
 from app.config import settings
-from app.data.reading_queue import sync_current_to_reference
-from app.data.song_queue import sync_song_queue_to_reference
+from app.data.reading_queue import clear_reading_queue, sync_current_to_reference
+from app.data.song_queue import clear_song_queue, sync_song_queue_to_reference
 from app.data.verses import SUPPORTED_TRANSLATIONS, load_all_translations
 from app.database import AsyncSessionLocal, engine
 from app.matching import display_state, llm_cleanup_state
@@ -45,6 +45,16 @@ async def lifespan(app: FastAPI):
         count = await db.scalar(select(func.count()).select_from(Verse))
         if count == 0:
             await load_all_translations(db, SUPPORTED_TRANSLATIONS)
+
+    # Both queues are DB-persisted so a mid-service backend restart doesn't
+    # lose the operator's place -- but that also meant a fresh app launch
+    # could load whatever queue was left active from a previous session (a
+    # prior test, or last week's service) and show it as if it were live.
+    # A new launch is a new service: start with both queues genuinely empty.
+    async with AsyncSessionLocal() as db:
+        await clear_reading_queue(db)
+    async with AsyncSessionLocal() as db:
+        await clear_song_queue(db)
 
     # The LLM cleanup step runs a local model alongside STT + embeddings on
     # the same machine -- below a free-RAM floor, disable it automatically
