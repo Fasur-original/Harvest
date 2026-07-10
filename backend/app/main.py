@@ -134,3 +134,16 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    # The only place uvicorn.run() is called directly -- this is what lets
+    # a PyInstaller-frozen build of this file start its own server with no
+    # `uvicorn app.main:app` step, while `uvicorn app.main:app --reload`
+    # (dev) keeps working unchanged since it imports `app` without ever
+    # executing this block. Host/port hardcoded to 127.0.0.1:8000 for now
+    # (Phase 10 MVP scope) -- port-conflict detection/fallback is a later
+    # improvement, not required for the desktop MVP.
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -1,0 +1,4 @@
+# Build/dev-only dependencies -- not needed at runtime, and must not be
+# bundled into the frozen PyInstaller executable (Phase 10).
+-r requirements.txt
+pyinstaller

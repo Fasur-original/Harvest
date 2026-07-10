@@ -59,7 +59,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-This starts the Vite dev server and opens the Harvest desktop window (an operator console window plus a separate projector output window — drag the latter onto a second display and toggle it fullscreen from the sidebar). The backend (above) needs to be running separately in dev — packaging it as a Tauri sidecar so a built app starts it automatically is still open (see Project status below).
+This starts the Vite dev server and opens the Harvest desktop window (an operator console window plus a separate projector output window — drag the latter onto a second display and toggle it fullscreen from the sidebar). The backend (above) still needs to be running separately in **dev** — a packaged build starts it automatically via a Tauri sidecar (see Project status below).
 
 ## Project status
 
@@ -67,8 +67,9 @@ Phases 00–09 of `app-phases/` are complete: foundations, the two-window displa
 
 Beyond the phase plan, the operator console has since been rebuilt around Zustand state management and shadcn/ui (light/dark themes, toasts, loading states), split into dedicated Bible and Songs pages with their own live pending-match queues and reading/song queues, and gained translation-comparison ranking, bulk CSV/XLSX song import, and a live preview thumbnail of the projector output.
 
+**Phase 10 (desktop packaging)**: the wiring is done and cross-platform — a PyInstaller entrypoint in `backend/app/main.py`, the backend registered as a Tauri sidecar with spawn/kill lifecycle management (release builds only; dev mode is untouched), `requirements.txt` split so build-only tooling doesn't get bundled, and `.github/workflows/build.yml` builds real Windows/macOS/Linux installers on GitHub's own runners for each OS (a PyInstaller executable has to be built *on* its target OS — there's no cross-compiling it from one machine). Trigger it manually any time for a test build, or push a `v*` tag to publish a draft release with all three attached. No CI run has actually happened yet — see `app-phases/10-desktop-packaging.md` for the one-time repo setting it needs and a post-build checklist.
+
 **Not yet done:**
 
-- **Phase 10 (desktop packaging)** — no PyInstaller bundle or Tauri sidecar yet; running the app currently means starting the backend and `pnpm tauri dev` separately, as above.
 - **Phase 11 (hosted multi-tenant)** — explicitly deferred; not scheduled until a real church asks for hosted login (see `app-phases/11-hosted-multi-tenant-future.md`).
 - Matching confidence thresholds are real, measured values (not guesses), but still flagged as open to retuning once actual service transcripts exist — see Phase 09 and Phase 05's own notes on this.

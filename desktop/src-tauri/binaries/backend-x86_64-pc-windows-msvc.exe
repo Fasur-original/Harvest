@@ -1,0 +1,14 @@
+PLACEHOLDER -- not a real executable.
+
+Tauri's build script requires this exact file to exist at this exact path
+(binaries/backend-<target-triple>.exe) just to run `cargo check` / `cargo
+build` / `pnpm tauri dev` successfully, even though the sidecar is only
+ever spawned in a release build (see spawn_backend_sidecar in src/lib.rs).
+
+Before running `pnpm tauri build` for real, REPLACE this file with the
+actual PyInstaller-built backend executable:
+
+  cd backend
+  pip install -r requirements-dev.txt
+  pyinstaller --onefile --name backend app/main.py
+  copy dist\backend.exe ..\desktop\src-tauri\binaries\backend-x86_64-pc-windows-msvc.exe
