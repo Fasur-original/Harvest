@@ -266,10 +266,31 @@ _TRANSLATION_ALIASES = {
     "tpt": "TPT",
     "the passion translation": "TPT",
     "passion translation": "TPT",
+    "msg": "MSG",
+    "the message": "MSG",
+    "message translation": "MSG",
+    "the message translation": "MSG",
 }
-_TRANSLATION_PATTERN = "|".join(re.escape(form) for form in sorted(_TRANSLATION_ALIASES, key=len, reverse=True))
+
+# "WEB" and "message" are themselves ordinary English words ("a web of
+# lies," "I have a message for you") -- these two specifically keep
+# requiring the full "in/from/using the ___" lead-in so unrelated speech
+# doesn't misfire. Every other alias here -- an abbreviation nobody says by
+# accident (YLT, KJV, TPT, MSG...) or a multi-word full name that's already
+# self-disambiguating ("world english bible") -- doesn't carry that same
+# collision risk, and requiring a literal "the" for those was too strict:
+# real speech drops the article constantly ("read that in YLT," "switch to
+# KJV"), and that lead-in mismatch is exactly what silently failed to
+# recognize a spoken "YLT" instead of switching to it.
+_STRICT_LEAD_IN_ALIASES = {"web", "message"}
+_LOOSE_PATTERN = "|".join(
+    re.escape(form) for form in sorted(_TRANSLATION_ALIASES, key=len, reverse=True) if form not in _STRICT_LEAD_IN_ALIASES
+)
+_STRICT_PATTERN = "|".join(re.escape(form) for form in sorted(_STRICT_LEAD_IN_ALIASES, key=len, reverse=True))
 _TRANSLATION_RE = re.compile(
-    rf"\b(?:in|from|using)\s+the\s+(?P<translation>{_TRANSLATION_PATTERN})\b", re.IGNORECASE
+    rf"\b(?:in|from|using|to)\s+(?:the\s+)?(?P<loose>{_LOOSE_PATTERN})\b"
+    rf"|\b(?:in|from|using)\s+the\s+(?P<strict>{_STRICT_PATTERN})\b",
+    re.IGNORECASE,
 )
 
 
@@ -283,7 +304,8 @@ def detect_translation(text: str) -> str | None:
     match = _TRANSLATION_RE.search(text)
     if match is None:
         return None
-    return _TRANSLATION_ALIASES[match.group("translation").lower()]
+    token = match.group("loose") or match.group("strict")
+    return _TRANSLATION_ALIASES[token.lower()]
 
 
 def normalize_translation_name(name: str) -> str | None:
