@@ -28,13 +28,6 @@ jobs:
             rust-target: x86_64-unknown-linux-gnu
             backend-ext: ""
     runs-on: ${{ matrix.platform }}
-    # AppImage bundling (part of Linux's "all" targets, after .deb/.rpm) uses
-    # linuxdeploy, which tries to self-mount via FUSE by default -- GitHub's
-    # Ubuntu runners don't have FUSE available, so instead of failing it just
-    # hangs indefinitely. This tells it to extract-and-run instead of
-    # mounting, which needs no FUSE. Harmless no-op on Windows/macOS.
-    env:
-      APPIMAGE_EXTRACT_AND_RUN: "1"
 
     steps:
       - uses: actions/checkout@v4
