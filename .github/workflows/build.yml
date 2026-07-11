@@ -59,10 +59,18 @@ jobs:
         with:
           version: 11
 
+      # sentence-transformers depends on torch with no CPU/GPU distinction --
+      # on Linux especially, PyPI's default torch wheel drags in several GB
+      # of CUDA runtime libraries (nvidia-cublas-cu12, nvidia-cudnn-cu12,
+      # etc.) that this app never uses (CPU-only everywhere, no GPU setting
+      # exists anywhere in the pipeline). Installing the CPU-only build from
+      # PyTorch's own index first satisfies the dependency before
+      # requirements-dev.txt gets a chance to pull the much larger default.
       - name: Install backend build dependencies
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-dev.txt
 
       # --collect-all for the three packages most likely to trip PyInstaller's

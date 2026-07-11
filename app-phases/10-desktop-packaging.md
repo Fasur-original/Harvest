@@ -34,13 +34,23 @@ Only one architecture per OS for now: `x86_64-pc-windows-msvc`, `aarch64-apple-d
 
 **One-time repo setting needed**: Settings → Actions → General → Workflow permissions → "Read and write permissions", so the built-in `GITHUB_TOKEN` can create the draft release on a tag push. Everything else the workflow needs (Rust, Node, pnpm, Python, Linux's webkit2gtk/appindicator/build deps) it installs itself, on a clean runner, every time — nothing hidden in local machine state.
 
-**This has not actually been run yet** — the workflow file is new and unexercised. First run will very likely surface something to fix (see the PyInstaller caveat below), same as any CI pipeline's first real run.
+## Bugs found from your real CI runs
+
+Exactly the "first run surfaces something" pattern every other phase's live testing has hit, four rounds in a row:
+
+1. **`desktop/pnpm-workspace.yaml`** (pre-existing, not something this phase added — likely from an earlier pnpm build-script approval prompt) had an `allowBuilds` setting but no `packages:` field. Any `pnpm-workspace.yaml` presence makes pnpm treat the directory as a workspace root, and a from-scratch install errors if `packages` is missing/empty. Local dev never hit this because `pnpm install` mostly short-circuits to "already up to date" once `node_modules` already exists — CI's genuinely clean install hit the full validation path every time. Fixed by adding `packages: ["."]`, declaring it as the single package it actually is (verified with a real local `pnpm install`).
+2. **pnpm version mismatch**: the workflow pinned pnpm to `9`, reasoning (wrongly) from the lockfile's `lockfileVersion: '9.0'` field — that's a lockfile *format* version, not the CLI version. Actual local pnpm is v11.9. Fixed to pin `11` in CI to match.
+3. **Node version too old for pnpm 11**: pnpm 11.11 requires Node ≥22.13; the workflow had `node-version: 20`. Fixed to `22`, matching local Node v22.17.
+4. **The Linux job hung for hours and had to be manually cancelled**, while Windows and macOS completed fine. Cause: `sentence-transformers` depends on `torch` with no CPU/GPU distinction, and PyPI's default Linux `torch` wheel pulls in several GB of CUDA runtime libraries (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`, etc.) split across many separate large downloads — this app is CPU-only everywhere by design (no GPU setting exists anywhere in the matching/STT pipeline), so none of that is ever used. Fixed by installing the CPU-only build from PyTorch's own index (`pip install torch --index-url https://download.pytorch.org/whl/cpu`) before the rest of `requirements-dev.txt`, both in CI and in the local build command below and the README's backend setup — satisfying the dependency with the small build before anything else gets a chance to pull the large one.
+
+All four are now fixed in the workflow and, where relevant, in the local setup docs too. **The workflow still hasn't completed a clean end-to-end run yet** — worth re-triggering (`workflow_dispatch`) to confirm these actually clear it, since each fix so far has been reactive to a real failure, not something verified in advance.
 
 ## Building it locally, if you'd rather not wait on CI
 
 ```bash
 # 1. Freeze the backend into a single executable
 cd backend
+pip install torch --index-url https://download.pytorch.org/whl/cpu  # CPU-only -- see README's Backend setup for why
 pip install -r requirements-dev.txt
 pyinstaller --onefile --name backend --collect-all faster_whisper --collect-all sentence_transformers --collect-all sqlite_vec app/main.py
 

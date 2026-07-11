@@ -38,7 +38,15 @@ cd backend
 python -m venv venv
 venv\Scripts\activate        # Windows
 # source venv/bin/activate   # macOS/Linux
+
+# CPU-only torch first -- sentence-transformers depends on torch with no
+# CPU/GPU distinction, and PyPI's default wheel (especially on Linux) drags
+# in several GB of CUDA libraries this app never uses (everything here is
+# CPU-only by design, no GPU setting exists anywhere). This satisfies the
+# dependency before the next line gets a chance to pull the much larger one.
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
+
 copy .env.example .env       # Windows
 # cp .env.example .env       # macOS/Linux
 ```
